@@ -1,0 +1,47 @@
+import '../../core/models/log_entry.dart';
+import '../../core/models/server_status.dart';
+
+/// Everything the app can ask of the remote server.
+///
+/// Implementations:
+///  * [MockServerRepository] — demo data, no network.
+///  * (planned) `FirebaseServerRepository` — Firebase Realtime / Firestore.
+///  * (planned) `ApiServerRepository` — direct REST calls to the agent.
+abstract interface class ServerRepository {
+  /// Live tail of the server log.
+  Stream<LogEntry> logs();
+
+  /// Periodic status snapshots.
+  Stream<ServerStatus> status();
+
+  /// Last known snapshot, or null before the first one arrives.
+  ServerStatus? get lastStatus;
+
+  /// Brings the link up. Emits progress through [status].
+  Future<void> connect();
+
+  /// Brings the link down on purpose.
+  Future<void> disconnect();
+
+  /// Drops and re-establishes the link.
+  Future<void> reconnect();
+
+  /// Reboots the remote machine (destructive — always confirm in the UI).
+  Future<void> rebootServer();
+
+  /// Restarts a single service by name.
+  Future<void> restartService(String name);
+
+  /// Drops caches without a restart.
+  Future<void> clearCache();
+
+  /// Runs a shell-style command from the terminal prompt and returns its
+  /// textual output. Read-only by design; destructive commands must go through
+  /// the named methods above.
+  Future<String> runCommand(String command);
+
+  /// Recent log lines to seed the terminal view.
+  Future<List<LogEntry>> fetchLogHistory({int limit = 40});
+
+  void dispose();
+}

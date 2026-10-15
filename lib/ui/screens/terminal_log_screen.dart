@@ -1,0 +1,231 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+
+import '../../core/models/log_entry.dart';
+import '../../core/theme/retro_theme.dart';
+import '../../features/terminal/terminal_bloc.dart';
+import '../../features/terminal/terminal_event.dart';
+import '../../features/terminal/terminal_state.dart';
+import '../widgets/glow_text.dart';
+import '../widgets/level_tag.dart';
+import '../widgets/retro_prompt_field.dart';
+import '../widgets/terminal_panel.dart';
+
+/// Main screen: live server log with a command prompt.
+class TerminalLogScreen extends StatefulWidget {
+  const TerminalLogScreen({super.key});
+
+  @override
+  State<TerminalLogScreen> createState() => _TerminalLogScreenState();
+}
+
+class _TerminalLogScreenState extends State<TerminalLogScreen> {
+  final ScrollController _scroll = ScrollController();
+  final TextEditingController _input = TextEditingController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    _input.dispose();
+    super.dispose();
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scroll.hasClients) return;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return Padding(
+      padding: const EdgeInsets.all(10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const _LevelFilterBar(),
+          const SizedBox(height: 8),
+          Expanded(
+            child: BlocConsumer<TerminalBloc, TerminalState>(
+              listenWhen: (a, b) => a.entries.length != b.entries.length,
+              listener: (_, _) => _scrollToBottom(),
+              builder: (context, state) {
+                final lines = state.visible;
+                return TerminalPanel(
+                  title: 'live log · tail -f',
+                  expand: true,
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  trailing: Text(
+                    '${lines.length} lines',
+                    style: context.retroStyle(size: 10, color: palette.primaryDim, glow: false),
+                  ),
+                  child: state.loadingHistory && lines.isEmpty
+                      ? const _Waiting(text: 'reading log buffer…')
+                      : ListView.builder(
+                          controller: _scroll,
+                          itemCount: lines.length,
+                          itemBuilder: (context, i) => _LogLineView(lines[i]),
+                        ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 8),
+          BlocBuilder<TerminalBloc, TerminalState>(
+            buildWhen: (a, b) => a.executing != b.executing,
+            builder: (context, state) => RetroPromptField(
+              controller: _input,
+              busy: state.executing,
+              hint: 'команда… (help)',
+              onSubmitted: (value) {
+                context.read<TerminalBloc>().add(TerminalCommandSubmitted(value));
+                _input.clear();
+                _scrollToBottom();
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LogLineView extends StatelessWidget {
+  const _LogLineView(this.entry);
+
+  final LogEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final isPrompt = entry.source == 'prompt';
+    final dim = context.retroStyle(size: 11, color: palette.primaryDim, glow: false, letterSpacing: 0);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1.5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(width: 64, child: Text(entry.clock, style: dim)),
+          LevelTag(entry.level),
+          SizedBox(
+            width: 80,
+            child: Text(
+              entry.source,
+              overflow: TextOverflow.ellipsis,
+              style: dim.copyWith(color: isPrompt ? palette.accent : palette.primaryDim),
+            ),
+          ),
+          Expanded(
+            child: GlowText(
+              entry.message,
+              size: 12.5,
+              letterSpacing: 0.2,
+              glow: entry.level == LogLevel.error || entry.level == LogLevel.warn,
+              color: isPrompt
+                  ? palette.accent
+                  : logLevelColor(palette, entry.level),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LevelFilterBar extends StatelessWidget {
+  const _LevelFilterBar();
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return BlocBuilder<TerminalBloc, TerminalState>(
+      buildWhen: (a, b) => a.hidden != b.hidden,
+      builder: (context, state) {
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              Text(
+                'filter:',
+                style: context.retroStyle(size: 11, color: palette.primaryDim, glow: false),
+              ),
+              const SizedBox(width: 8),
+              for (final level in LogLevel.values) ...[
+                _LevelChip(
+                  level: level,
+                  visible: state.isVisible(level),
+                  onTap: () => context.read<TerminalBloc>().add(TerminalLevelToggled(level)),
+                ),
+                const SizedBox(width: 6),
+              ],
+              const SizedBox(width: 4),
+              _LevelChip(
+                level: LogLevel.info,
+                visible: true,
+                label: 'CLEAR',
+                onTap: () => context.read<TerminalBloc>().add(const TerminalCleared()),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _LevelChip extends StatelessWidget {
+  const _LevelChip({
+    required this.level,
+    required this.visible,
+    required this.onTap,
+    this.label,
+  });
+
+  final LogLevel level;
+  final bool visible;
+  final VoidCallback onTap;
+  final String? label;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final color = visible ? logLevelColor(palette, level) : palette.primaryDim;
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+        decoration: BoxDecoration(
+          border: Border.all(color: visible ? color : palette.border),
+          color: visible ? color.withValues(alpha: 0.12) : Colors.transparent,
+        ),
+        child: Text(
+          label ?? level.label,
+          style: context.retroStyle(
+            size: 10,
+            weight: FontWeight.w700,
+            color: color,
+            glow: false,
+            letterSpacing: 1.0,
+            decoration: visible ? null : TextDecoration.lineThrough,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _Waiting extends StatelessWidget {
+  const _Waiting({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: GlowText(text, size: 12, color: context.palette.primaryDim),
+    );
+  }
+}
