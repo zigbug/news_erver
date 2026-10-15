@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/retro_theme.dart';
-import '../../data/repositories/server_repository.dart';
+import '../../data/api/adaptive_repositories.dart';
 import '../../features/settings/settings_cubit.dart';
 import '../screens/chat_screen.dart';
 import '../screens/control_screen.dart';
@@ -37,7 +37,7 @@ class _AppShellState extends State<AppShell> {
     if (autoConnect) {
       // Kick the link up once the first frame is on screen.
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) context.read<ServerRepository>().connect();
+        if (mounted) context.read<AdaptiveServerRepository>().connect();
       });
     }
   }

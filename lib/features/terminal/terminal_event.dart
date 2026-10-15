@@ -1,6 +1,7 @@
 import 'package:equatable/equatable.dart';
 
 import '../../core/models/log_entry.dart';
+import 'terminal_state.dart';
 
 sealed class TerminalEvent extends Equatable {
   const TerminalEvent();
@@ -30,6 +31,15 @@ class TerminalLevelToggled extends TerminalEvent {
 
   @override
   List<Object?> get props => [level];
+}
+
+class TerminalModeToggled extends TerminalEvent {
+  const TerminalModeToggled(this.mode);
+
+  final TerminalMode mode;
+
+  @override
+  List<Object?> get props => [mode];
 }
 
 class TerminalCommandSubmitted extends TerminalEvent {

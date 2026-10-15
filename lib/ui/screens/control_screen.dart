@@ -20,7 +20,7 @@ class ControlScreen extends StatefulWidget {
 }
 
 class _ControlScreenState extends State<ControlScreen> {
-  String _service = 'node-agent';
+  String _service = 'nginx';
 
   Future<bool> _confirm(ControlAction action) async {
     final palette = context.palette;
@@ -113,7 +113,8 @@ class _ControlScreenState extends State<ControlScreen> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'DESTRUCTIVE OPS: reboot требует подтверждения. демо-режим, команды только имитируются.',
+                        'DESTRUCTIVE OPS: reboot и restart требуют подтверждения. '
+                        'команды уходят на хаб через ADMIN_KEY.',
                         style: context.retroStyle(size: 11, color: palette.error, glow: false),
                       ),
                     ),

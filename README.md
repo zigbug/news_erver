@@ -2,56 +2,68 @@
 
 **English.** A retro-styled Android console (Flutter) for monitoring and
 controlling a remote server: a CRT-and-phosphor look — green-on-black, phosphor
-glow, scanlines, tube flicker — wrapped around a properly layered architecture
-built for a future Firebase + server-API integration.
+glow, scanlines, tube flicker — wrapped around a properly layered architecture.
 
-This is a **demo build**: data comes from mocks (`MockServerRepository` /
+Out of the box it runs as a **demo** on mocks (`MockServerRepository` /
 `MockChatRepository`), while the UI, streams, timers and state transitions are
-real, so the whole interface runs and is tested end to end. Tabs: `TERMINAL`
-(live log + command prompt), `STATUS` (CPU / memory / disk / load / temperature,
-service states, CPU sparkline), `CHAT` (server bot), `CONTROL`
-(connect / reconnect / disconnect, service restart, cache flush, reboot with
-confirmation) and `SETUP` (palette, font, text scale, CRT effects, connection
-settings). Stack: Flutter 3.41 / Dart 3.11, `flutter_bloc` + `equatable`,
-`shared_preferences`; fonts VT323 and JetBrains Mono. Run with `flutter run`,
-verify with `flutter analyze` and `flutter test`. Swap the mocks for real
-implementations in `lib/app.dart` — the single wiring point.
+real, so the whole interface runs and is tested end to end. As soon as an
+**API base URL** is filled in on the `SETUP` tab, the app switches to
+`ApiServerRepository` / `ApiChatRepository`, which talk to the `server_hub` REST
+API directly. Tabs: `TERMINAL` (JOURNAL/SHELL mode switch), `STATUS`
+(CPU / memory / disk / load / service states, CPU sparkline), `CHAT`
+(status-bot), `CONTROL` (connect / reconnect / disconnect, service restart,
+reboot with confirmation) and `SETUP` (palette, font, text scale, CRT effects,
+hub connection). Stack: Flutter 3.41 / Dart 3.11, `flutter_bloc` + `equatable`,
+`shared_preferences`, `http`; fonts VT323 and JetBrains Mono. Run with
+`flutter run`, verify with `flutter analyze` and `flutter test`.
 
 ---
 
 Ретро-терминал для мониторинга и управления удалённым сервером. Android-приложение
 на Flutter: зелёные буквы на чёрном, фосфорное свечение, скан-линии и лёгкое
-мерцание ЭЛТ — но с настоящей архитектурой под будущую интеграцию с Firebase и
-API сервера.
+мерцание ЭЛТ — но с настоящей архитектурой.
 
-> **Статус: демо.** Данные моковые (`MockServerRepository` / `MockChatRepository`),
-> реальных сетевых вызовов пока нет. UI, стримы, таймеры и переходы состояний —
-> настоящие, поэтому интерфейс собирается и тестируется end-to-end.
+> **Режимы.** Без настройки подключения приложение работает на моках (демо).
+> Как только в `SETUP` задан `api base url` и `api key`, включаются реальные
+> репозитории поверх REST API `server_hub`.
+
+## Подключение к server_hub
+
+1. В `SETUP` → панель `connection · server_hub` укажи:
+   - `api base url` — например `https://hub.905911.ru:8448`;
+   - `api key` — `READ_KEY` (только чтение) или `ADMIN_KEY` (управление);
+2. нажми `PING HUB` — покажет версию сервиса или ошибку;
+3. `auto connect on boot` поднимает линию при старте; иначе — кнопка `CONNECT`
+   на вкладке `CONTROL`.
+
+Ключ передаётся в заголовке `X-API-Key`. Смена `api base url` на лету
+переключает делегат репозиториев, не трогая тему, CRT-эффекты и фокус ввода.
 
 ## Возможности
 
 - **CRT-эстетика** — палитры, фосфорное свечение текста, скан-линии, виньетка и
   мерцание трубки. Все эффекты отключаются в SETUP.
 - **Живой журнал** — поток логов с уровнями (`trace/debug/info/warn/error`),
-  фильтр по уровням, автоскролл.
-- **Телеметрия** — CPU, память, диск, load average, температура, состояние
-  сервисов, спарклайн истории CPU.
-- **Терминал** — командная строка с демо-командами; деструктив намеренно запрещён.
-- **Чат с ботом** — keyword-движок отвечает по состоянию сервера.
+  фильтр по уровням, автоскролл; источник — `/logs` хаба.
+- **Терминал** — переключатель режимов: `JOURNAL` (хвост журнала) и `SHELL`
+  (read-only командная строка); деструктив намеренно запрещён.
+- **Телеметрия** — CPU, память, диск, load average, состояние сервисов,
+  спарклайн истории CPU (температура на VPS недоступна — показывается `—`).
+- **Чат с ботом** — статус-бот: отвечает по живым данным `/status` и `/logs`.
 - **Панель управления** — connect / reconnect / disconnect, рестарт сервиса,
-  очистка кэша, перезагрузка (с подтверждением).
-- **Настройки** — палитра, шрифт, масштаб текста, CRT-эффекты, параметры
-  подключения (Firebase + API), интервал опроса, автоподключение.
+  перезагрузка и деплой (с подтверждением) через `/actions/*`.
+- **Настройки** — палитра, шрифт, масштаб текста, CRT-эффекты, подключение к
+  хабу (`api base url`, `api key`), интервал опроса, автоподключение.
 
 ## Экраны
 
 | Вкладка | Что показывает |
 | --- | --- |
-| `TERMINAL` | Поток логов (`tail -f`) + командная строка |
+| `TERMINAL` | Режимы `JOURNAL` (хвост логов) и `SHELL` (read-only промпт) |
 | `STATUS` | Системная сводка, метры утилизации, список сервисов |
-| `CHAT` | Диалог с серверным ботом и подсказки-быстрые вопросы |
+| `CHAT` | Диалог со статус-ботом и подсказки-быстрые вопросы |
 | `CONTROL` | Операции с линией, обслуживанием и питанием + журнал операций |
-| `SETUP` | Внешний вид и параметры подключения |
+| `SETUP` | Внешний вид и подключение к хабу |
 
 Плюс boot-экран с инициализацией и автоподключением при старте.
 
@@ -62,6 +74,7 @@ API сервера.
   настроек и панели управления
 - `equatable` — модели
 - `shared_preferences` — персист настроек (ключ `retro_settings_v1`)
+- `http` — REST-клиент к `server_hub`
 - Платформа: Android (первый приоритет)
 
 Шрифты: **VT323** (классический CRT, без кириллицы) + **JetBrains Mono**
@@ -90,19 +103,25 @@ flutter test
 
 ## Архитектура
 
-Слои разделены, сеть пока подменена моками. Всё, что нужно знать для замены
-бэкенда, — интерфейсы репозиториев.
+Слои разделены; сеть спрятана за интерфейсами репозиториев.
 
 ```
 core/      модели, тема, утилиты
-data/      интерфейсы репозиториев + мок-реализации
+  data/
+  repositories/  интерфейсы (ServerRepository, ChatRepository)
+  mock/          демо-реализации
+  api/           HubApi, ApiServerRepository / ApiChatRepository,
+                 Adaptive* — стабильные адаптеры mock ↔ api
 features/  bloc / cubit
 ui/        виджеты, экраны, shell
 ```
 
-**Точка подмены** — единственный файл `lib/app.dart`: там `MockServerRepository`
-и `MockChatRepository` передаются через `RepositoryProvider`. Меняем их на
-Firebase/API-реализации — и всё приложение переезжает на реальные данные.
+**Точка подмены** — `lib/app.dart`. В дереве живут два стабильных репозитория —
+`AdaptiveServerRepository` / `AdaptiveChatRepository`. Внутри они держат
+делегат: моки, пока `apiBaseUrl` пуст, иначе — API-реализации поверх общего
+`HubApi`. При изменении подключения адаптер меняет делегат на месте (через
+`BlocListener` на `SettingsCubit`), не пересобирая bloc-граф, поэтому правка
+темы, CRT-эффектов или адреса не рвёт линию и не теряет фокус в SETUP.
 
 ### Контракты репозиториев
 
@@ -129,18 +148,27 @@ abstract interface class ChatRepository {
 }
 ```
 
-Планируемые реализации: `FirebaseServerRepository` (Realtime / Firestore) и
-`ApiServerRepository` (прямой REST к агенту).
+Реализации: `MockServerRepository` / `MockChatRepository` (демо) и
+`ApiServerRepository` / `ApiChatRepository` (REST к `server_hub`). API-чат —
+статус-бот: отвечает по `/status` и `/logs`, ничего не меняет.
 
 ### Параметры подключения
 
-`ConnectionSettings` уже описывает форму контракта (пока только сохраняется
-локально, в сеть не уходит):
+`ConnectionSettings` (персистится в `shared_preferences`):
 
-- `serverId` — логический id машины, путь `servers/{serverId}/...`
-- `firebaseProjectId`, `firebaseApiKey`, `firebaseRegion`
-- `apiBaseUrl`, `apiToken`
-- `pollIntervalSeconds`, `autoConnect`
+- `apiBaseUrl` — адрес хаба, например `https://hub.905911.ru:8448`;
+- `apiToken` — ключ хаба (`READ_KEY` / `ADMIN_KEY`), уходит в `X-API-Key`;
+- `pollIntervalSeconds`, `autoConnect`.
+
+Поля `serverId` / `firebase*` сохранены в модели для обратной совместимости
+формата хранения, но в UI и логике больше не используются.
+
+Маппинг на API хаба: `status()` → `GET /status`, `logs()` →
+`GET /logs?source=…&since_ms=…`, `fetchLogHistory()` → `GET /logs?limit=…`,
+`restartService(name)` → `POST /actions/restart_{nginx,docker,mtproto,searx_mcp}`
+либо `POST /actions/restart_container {name}`, `rebootServer()` →
+`POST /actions/reboot`. `clearCache()` на хабе не поддерживается и возвращает
+ошибку (показывается в журнале операций).
 
 ## Тема и CRT-эффекты
 
@@ -158,14 +186,14 @@ abstract interface class ChatRepository {
 и `context.retro`. Тумблеры: скан-линии, фосфорное свечение, мерцание трубки,
 масштаб текста. Светлая палитра `paper` автоматически гасит свечение.
 
-## Демо-команды терминала
+## Read-only команды терминала
 
 ```
 help              список команд
 status            однострочная сводка о линии
 uptime            время с последней загрузки
-services          список юнитов с состояниями
-logs <n>          хвост буфера
+services          список docker-контейнеров и systemd-юнитов
+logs <n>          хвост n строк из /logs
 whoami            идентичность сессии
 echo <text>       эхо
 clear             очистить буфер
@@ -190,11 +218,11 @@ flutter test
 
 ## Roadmap
 
-- [ ] `FirebaseServerRepository` — Realtime Database / Firestore (`servers/{id}`)
-- [ ] `ApiServerRepository` — REST/WebSocket к серверному агенту
-- [ ] Аутентификация и шифрование токена (сейчас ключи хранятся в
-      `shared_preferences` открытым текстом — только для демо)
-- [ ] Push-уведомления об инцидентах
+- [x] `ApiServerRepository` — REST к серверному агенту (`server_hub`)
+- [x] Статус-бот поверх живых данных
+- [ ] Хранение ключа в защищённом хранилище (сейчас `api key` лежит в
+      `shared_preferences` открытым текстом)
+- [ ] Push-уведомления об инцидентах (FCM)
 - [ ] iOS-таргет
 
 ## Заметки

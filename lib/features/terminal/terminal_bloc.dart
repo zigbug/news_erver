@@ -14,6 +14,7 @@ class TerminalBloc extends Bloc<TerminalEvent, TerminalState> {
     on<TerminalStarted>(_onStarted);
     on<TerminalLineReceived>(_onLineReceived);
     on<TerminalLevelToggled>(_onLevelToggled);
+    on<TerminalModeToggled>(_onModeToggled);
     on<TerminalCommandSubmitted>(_onCommandSubmitted);
     on<TerminalCleared>(_onCleared);
   }
@@ -48,6 +49,14 @@ class TerminalBloc extends Bloc<TerminalEvent, TerminalState> {
     final hidden = {...state.hidden};
     if (!hidden.remove(event.level)) hidden.add(event.level);
     emit(state.copyWith(hidden: hidden));
+  }
+
+  void _onModeToggled(
+    TerminalModeToggled event,
+    Emitter<TerminalState> emit,
+  ) {
+    if (state.mode == event.mode) return;
+    emit(state.copyWith(mode: event.mode));
   }
 
   Future<void> _onCommandSubmitted(

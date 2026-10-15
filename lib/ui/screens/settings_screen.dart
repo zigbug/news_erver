@@ -3,11 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../core/models/app_settings.dart';
 import '../../core/theme/app_fonts.dart';
 import '../../core/theme/retro_palette.dart';
 import '../../core/theme/retro_palettes.dart';
 import '../../core/theme/retro_theme.dart';
 import '../../core/utils/formatters.dart';
+import '../../data/api/hub_api.dart';
 import '../../features/settings/settings_cubit.dart';
 import '../../features/settings/settings_state.dart';
 import '../widgets/bar_meter.dart';
@@ -16,7 +18,7 @@ import '../widgets/retro_button.dart';
 import '../widgets/retro_switch_row.dart';
 import '../widgets/terminal_panel.dart';
 
-/// Theme, CRT effects and the (not yet wired) connection config.
+/// Theme, CRT effects and the server_hub connection config.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -25,23 +27,19 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  late final TextEditingController _serverId;
-  late final TextEditingController _projectId;
-  late final TextEditingController _apiKey;
-  late final TextEditingController _region;
   late final TextEditingController _baseUrl;
   late final TextEditingController _token;
 
   Timer? _debounce;
 
+  bool _pinging = false;
+  String? _pingResult;
+  bool _pingOk = false;
+
   @override
   void initState() {
     super.initState();
     final connection = context.read<SettingsCubit>().state.settings.connection;
-    _serverId = TextEditingController(text: connection.serverId);
-    _projectId = TextEditingController(text: connection.firebaseProjectId);
-    _apiKey = TextEditingController(text: connection.firebaseApiKey);
-    _region = TextEditingController(text: connection.firebaseRegion);
     _baseUrl = TextEditingController(text: connection.apiBaseUrl);
     _token = TextEditingController(text: connection.apiToken);
   }
@@ -49,7 +47,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     _debounce?.cancel();
-    for (final controller in [_serverId, _projectId, _apiKey, _region, _baseUrl, _token]) {
+    for (final controller in [_baseUrl, _token]) {
       controller.dispose();
     }
     super.dispose();
@@ -63,15 +61,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final current = context.read<SettingsCubit>().state.settings.connection;
       context.read<SettingsCubit>().updateConnection(
         current.copyWith(
-          serverId: _serverId.text.trim(),
-          firebaseProjectId: _projectId.text.trim(),
-          firebaseApiKey: _apiKey.text.trim(),
-          firebaseRegion: _region.text.trim(),
           apiBaseUrl: _baseUrl.text.trim(),
           apiToken: _token.text.trim(),
         ),
       );
     });
+  }
+
+  /// One-shot probe of the server_hub API with the current form values.
+  Future<void> _ping() async {
+    final base = _baseUrl.text.trim();
+    if (base.isEmpty) {
+      setState(() {
+        _pingResult = 'укажите api base url';
+        _pingOk = false;
+      });
+      return;
+    }
+    setState(() {
+      _pinging = true;
+      _pingResult = null;
+    });
+    final api = HubApi(
+      connection: () => ConnectionSettings(
+        apiBaseUrl: base,
+        apiToken: _token.text.trim(),
+      ),
+    );
+    try {
+      final status = await api.get('/status');
+      final host = status['host']?.toString() ?? 'hub';
+      final version = status['version']?.toString();
+      if (!mounted) return;
+      setState(() {
+        _pingResult = version == null ? 'online · $host' : 'online · $host · v$version';
+        _pingOk = true;
+      });
+    } on HubApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _pingResult = e.isUnauthorized ? '401 · неверный ключ' : 'offline · ${e.message}';
+        _pingOk = false;
+      });
+    } finally {
+      api.close();
+      if (mounted) setState(() => _pinging = false);
+    }
   }
 
   Future<void> _resetConfirm() async {
@@ -233,7 +268,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: 10),
               TerminalPanel(
-                title: 'connection · firebase + api',
+                title: 'connection · server_hub',
                 accent: true,
                 trailing: GlowText(
                   '${(connection.completeness * 100).round()}%',
@@ -246,13 +281,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        border: Border.all(color: palette.warning.withValues(alpha: 0.6)),
-                        color: palette.warning.withValues(alpha: 0.08),
+                        border: Border.all(color: palette.accent.withValues(alpha: 0.6)),
+                        color: palette.accent.withValues(alpha: 0.08),
                       ),
                       child: Text(
-                        'ДЕМО: поля сохраняются локально и пока не используются. '
-                        'интеграция Firebase и API сервера — следующий шаг.',
-                        style: context.retroStyle(size: 11, color: palette.warning, glow: false),
+                        'ключ хаба (ADMIN_KEY) даёт доступ и к чтению, и к управлению. '
+                        'нужен для подключения к /status, /logs и /actions.',
+                        style: context.retroStyle(size: 11, color: palette.accent, glow: false),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -262,13 +297,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       width: 16,
                     ),
                     const SizedBox(height: 12),
-                    _field('server id', _serverId, hint: 'srv-01'),
-                    _field('firebase project id', _projectId, hint: 'my-server-console'),
-                    _field('firebase web api key', _apiKey, obscure: true, hint: 'AIza…'),
-                    _field('firebase region', _region, hint: 'europe-west1'),
-                    _field('api base url', _baseUrl, hint: 'https://srv-01.lan:8443'),
-                    _field('api token', _token, obscure: true, hint: 'bearer …'),
+                    _field('api base url', _baseUrl, hint: 'https://hub.905911.ru:8448'),
+                    _field('api token', _token, obscure: true, hint: 'ADMIN_KEY'),
                     const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: GlowText(
+                            connection.apiConfigured ? 'api: set' : 'api: unset',
+                            size: 11,
+                            color: connection.apiConfigured ? palette.success : palette.primaryDim,
+                            glow: false,
+                          ),
+                        ),
+                        RetroButton(
+                          label: _pinging ? 'PING…' : 'PING HUB',
+                          dense: true,
+                          onPressed: _pinging ? null : _ping,
+                        ),
+                      ],
+                    ),
+                    if (_pingResult != null) ...[
+                      const SizedBox(height: 6),
+                      GlowText(
+                        _pingResult!,
+                        size: 11,
+                        color: _pingOk ? palette.success : palette.warning,
+                        glow: false,
+                      ),
+                    ],
+                    const SizedBox(height: 10),
                     Text(
                       'poll interval',
                       style: context.retroStyle(size: 11, color: palette.primaryDim, glow: false),
@@ -309,29 +367,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       hint: 'поднимать линию при запуске',
                       value: connection.autoConnect,
                       onChanged: cubit.setAutoConnect,
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: GlowText(
-                            connection.firebaseConfigured
-                                ? 'firebase: ready to wire'
-                                : 'firebase: not configured',
-                            size: 11,
-                            color: connection.firebaseConfigured
-                                ? palette.success
-                                : palette.primaryDim,
-                            glow: false,
-                          ),
-                        ),
-                        GlowText(
-                          connection.apiConfigured ? 'api: set' : 'api: unset',
-                          size: 11,
-                          color: connection.apiConfigured ? palette.success : palette.primaryDim,
-                          glow: false,
-                        ),
-                      ],
                     ),
                   ],
                 ),

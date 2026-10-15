@@ -40,10 +40,8 @@ class ConnectionSettings extends Equatable {
   /// 0..1 completeness of the connection form, used by the settings screen.
   double get completeness {
     final fields = <bool>[
-      serverId.trim().isNotEmpty,
-      firebaseProjectId.trim().isNotEmpty,
-      firebaseApiKey.trim().isNotEmpty,
       apiBaseUrl.trim().isNotEmpty,
+      apiToken.trim().isNotEmpty,
     ];
     return fields.where((f) => f).length / fields.length;
   }

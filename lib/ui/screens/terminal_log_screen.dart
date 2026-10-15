@@ -42,51 +42,135 @@ class _TerminalLogScreenState extends State<TerminalLogScreen> {
     final palette = context.palette;
     return Padding(
       padding: const EdgeInsets.all(10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const _LevelFilterBar(),
-          const SizedBox(height: 8),
-          Expanded(
-            child: BlocConsumer<TerminalBloc, TerminalState>(
-              listenWhen: (a, b) => a.entries.length != b.entries.length,
-              listener: (_, _) => _scrollToBottom(),
-              builder: (context, state) {
-                final lines = state.visible;
-                return TerminalPanel(
-                  title: 'live log · tail -f',
-                  expand: true,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                  trailing: Text(
-                    '${lines.length} lines',
-                    style: context.retroStyle(size: 10, color: palette.primaryDim, glow: false),
+      child: BlocBuilder<TerminalBloc, TerminalState>(
+        buildWhen: (a, b) => a.mode != b.mode,
+        builder: (context, state) {
+          final shell = state.mode == TerminalMode.shell;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const _ModeBar(),
+              const SizedBox(height: 8),
+              Expanded(
+                child: BlocConsumer<TerminalBloc, TerminalState>(
+                  listenWhen: (a, b) => a.entries.length != b.entries.length,
+                  listener: (_, _) => _scrollToBottom(),
+                  builder: (context, state) {
+                    final lines = state.visible;
+                    return TerminalPanel(
+                      title: shell ? 'shell · read-only' : 'live log · tail -f',
+                      expand: true,
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                      trailing: Text(
+                        '${lines.length} lines',
+                        style: context.retroStyle(size: 10, color: palette.primaryDim, glow: false),
+                      ),
+                      child: state.loadingHistory && lines.isEmpty
+                          ? const _Waiting(text: 'reading log buffer…')
+                          : ListView.builder(
+                              controller: _scroll,
+                              itemCount: lines.length,
+                              itemBuilder: (context, i) => _LogLineView(lines[i]),
+                            ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 8),
+              if (shell)
+                BlocBuilder<TerminalBloc, TerminalState>(
+                  buildWhen: (a, b) => a.executing != b.executing,
+                  builder: (context, state) => RetroPromptField(
+                    controller: _input,
+                    busy: state.executing,
+                    hint: 'команда… (help)',
+                    onSubmitted: (value) {
+                      context.read<TerminalBloc>().add(TerminalCommandSubmitted(value));
+                      _input.clear();
+                      _scrollToBottom();
+                    },
                   ),
-                  child: state.loadingHistory && lines.isEmpty
-                      ? const _Waiting(text: 'reading log buffer…')
-                      : ListView.builder(
-                          controller: _scroll,
-                          itemCount: lines.length,
-                          itemBuilder: (context, i) => _LogLineView(lines[i]),
-                        ),
-                );
-              },
+                )
+              else
+                Text(
+                  'journal · только чтение. переключитесь в SHELL, чтобы ввести команду.',
+                  style: context.retroStyle(size: 10, color: palette.primaryDim, glow: false),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Switches between the read-only server journal and the read-only shell prompt.
+class _ModeBar extends StatelessWidget {
+  const _ModeBar();
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<TerminalBloc, TerminalState>(
+      buildWhen: (a, b) => a.mode != b.mode,
+      builder: (context, state) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                for (final mode in TerminalMode.values) ...[
+                  Expanded(
+                    child: _ModeTab(
+                      mode: mode,
+                      active: state.mode == mode,
+                      onTap: () =>
+                          context.read<TerminalBloc>().add(TerminalModeToggled(mode)),
+                    ),
+                  ),
+                  if (mode != TerminalMode.values.last) const SizedBox(width: 8),
+                ],
+              ],
             ),
+            if (state.mode == TerminalMode.journal) ...[
+              const SizedBox(height: 8),
+              const _LevelFilterBar(),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ModeTab extends StatelessWidget {
+  const _ModeTab({required this.mode, required this.active, required this.onTap});
+
+  final TerminalMode mode;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          border: Border.all(color: active ? palette.accent : palette.border),
+          color: active ? palette.accent.withValues(alpha: 0.12) : Colors.transparent,
+        ),
+        child: Text(
+          mode.label,
+          style: context.retroStyle(
+            size: 11,
+            weight: FontWeight.w700,
+            color: active ? palette.accent : palette.primaryDim,
+            glow: active,
+            letterSpacing: 1.4,
           ),
-          const SizedBox(height: 8),
-          BlocBuilder<TerminalBloc, TerminalState>(
-            buildWhen: (a, b) => a.executing != b.executing,
-            builder: (context, state) => RetroPromptField(
-              controller: _input,
-              busy: state.executing,
-              hint: 'команда… (help)',
-              onSubmitted: (value) {
-                context.read<TerminalBloc>().add(TerminalCommandSubmitted(value));
-                _input.clear();
-                _scrollToBottom();
-              },
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
