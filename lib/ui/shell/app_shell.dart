@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/retro_theme.dart';
-import '../../data/api/adaptive_repositories.dart';
+import '../../data/api/api_server_repository.dart';
 import '../../features/settings/settings_cubit.dart';
 import '../screens/chat_screen.dart';
 import '../screens/control_screen.dart';
@@ -33,11 +33,18 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
-    final autoConnect = context.read<SettingsCubit>().state.settings.connection.autoConnect;
+    final autoConnect =
+        context.read<SettingsCubit>().state.settings.connection.autoConnect;
     if (autoConnect) {
-      // Kick the link up once the first frame is on screen.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) context.read<AdaptiveServerRepository>().connect();
+      // Kick the link up once the first frame is on screen. A failed connect
+      // (no base URL, hub down) must not crash: the UI drops to OFFLINE.
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        try {
+          await context.read<ApiServerRepository>().connect();
+        } catch (_) {
+          // Surfaced through the status stream as OFFLINE.
+        }
       });
     }
   }

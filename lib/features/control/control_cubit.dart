@@ -14,7 +14,7 @@ class ControlCubit extends Cubit<ControlState> {
     return _run(
       action,
       detail: switch (action) {
-        ControlAction.restartService => service ?? 'node-agent',
+        ControlAction.restartService => service ?? 'nginx',
         ControlAction.reboot => 'power cycle requested',
         ControlAction.clearCache => 'flush caches',
         ControlAction.connect => 'link up',
@@ -26,7 +26,7 @@ class ControlCubit extends Cubit<ControlState> {
         ControlAction.disconnect => _repository.disconnect(),
         ControlAction.reconnect => _repository.reconnect(),
         ControlAction.reboot => _repository.rebootServer(),
-        ControlAction.restartService => _repository.restartService(service ?? 'node-agent'),
+        ControlAction.restartService => _repository.restartService(service ?? 'nginx'),
         ControlAction.clearCache => _repository.clearCache(),
       },
     );

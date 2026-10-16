@@ -13,8 +13,7 @@ import 'hub_api.dart';
 /// and `/logs` on timers and pushes the results into long-lived broadcast
 /// streams. Destructive operations map onto the hub's action allowlist.
 class ApiServerRepository implements ServerRepository {
-  ApiServerRepository(this._api, {this.pollIntervalSeconds = 5})
-    : _logInterval = const Duration(seconds: 2);
+  ApiServerRepository(this._api) : _logInterval = const Duration(seconds: 2);
 
   /// Default log source for the terminal tail (a systemd unit or container).
   static const String defaultLogSource = 'server_hub';
@@ -43,13 +42,13 @@ class ApiServerRepository implements ServerRepository {
 
   final HubApi _api;
   final Duration _logInterval;
-  final int pollIntervalSeconds;
 
   final _statusController = StreamController<ServerStatus>.broadcast();
   final _logController = StreamController<LogEntry>.broadcast();
 
   Timer? _statusTimer;
   Timer? _logTimer;
+  bool _polling = false;
 
   LinkState _link = LinkState.offline;
   Map<String, dynamic>? _raw;
@@ -86,6 +85,7 @@ class ApiServerRepository implements ServerRepository {
       await _refreshStatus();
     } catch (_) {
       _link = LinkState.offline;
+      _emitOffline();
       rethrow;
     }
     _link = LinkState.online;
@@ -97,7 +97,7 @@ class ApiServerRepository implements ServerRepository {
   Future<void> disconnect() async {
     _stopTimers();
     _link = LinkState.offline;
-    _emitCurrent();
+    _emitOffline();
   }
 
   @override
@@ -244,16 +244,47 @@ class ApiServerRepository implements ServerRepository {
     _statusController.add(status);
   }
 
+  /// Publishes a placeholder snapshot so the UI visibly drops to OFFLINE.
+  void _emitOffline() {
+    if (_statusController.isClosed) return;
+    final status = ServerStatus(
+      hostname: _last?.hostname ?? 'unknown',
+      os: _last?.os ?? '',
+      link: LinkState.offline,
+      uptime: Duration.zero,
+      cpuPercent: 0,
+      memoryUsedMb: 0,
+      memoryTotalMb: 0,
+      diskUsedPercent: 0,
+      loadAverage: 0,
+      temperature: noTemperature,
+      services: const [],
+      sampledAt: DateTime.now(),
+    );
+    _last = status;
+    _statusController.add(status);
+  }
+
   void _startTimers() {
     _stopTimers();
-    _statusTimer = Timer.periodic(
-      Duration(seconds: pollIntervalSeconds),
-      (_) => _pollStatus(),
-    );
+    _polling = true;
+    _scheduleStatusPoll();
     _logTimer = Timer.periodic(_logInterval, (_) => _pollLogs());
   }
 
+  /// Schedules the next `/status` poll from the *current* connection settings,
+  /// so editing the interval in SETUP takes effect without rebuilding the repo.
+  void _scheduleStatusPoll() {
+    _statusTimer?.cancel();
+    final seconds = _api.connection.pollIntervalSeconds.clamp(1, 3600);
+    _statusTimer = Timer(Duration(seconds: seconds), () async {
+      await _pollStatus();
+      if (_polling) _scheduleStatusPoll();
+    });
+  }
+
   void _stopTimers() {
+    _polling = false;
     _statusTimer?.cancel();
     _statusTimer = null;
     _logTimer?.cancel();

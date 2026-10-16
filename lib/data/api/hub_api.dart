@@ -46,6 +46,27 @@ class HubApi {
   final bool _ownsClient;
   final Duration timeout;
 
+  /// Snapshot of the connection the client will use for the next request.
+  ConnectionSettings get connection => _connection();
+
+  /// Exchanges the admin password for a ready-to-use API key.
+  ///
+  /// Hits `POST /auth/token`; the hub replies with `{apiKey, role}`. Throws
+  /// [HubApiException] when the password is wrong (401) or the endpoint is
+  /// disabled (503).
+  Future<String> login(String password) async {
+    final json = await _send(
+      'POST',
+      '/auth/token',
+      body: {'password': password},
+    );
+    final key = json['apiKey'];
+    if (key is! String || key.isEmpty) {
+      throw const HubApiException(null, 'хаб вернул пустой ключ');
+    }
+    return key;
+  }
+
   static String _normalize(String value) {
     var v = value.trim();
     while (v.endsWith('/')) {

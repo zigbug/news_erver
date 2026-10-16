@@ -28,11 +28,12 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _baseUrl;
-  late final TextEditingController _token;
+  late final TextEditingController _password;
 
   Timer? _debounce;
 
   bool _pinging = false;
+  bool _fetchingKey = false;
   String? _pingResult;
   bool _pingOk = false;
 
@@ -41,13 +42,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     final connection = context.read<SettingsCubit>().state.settings.connection;
     _baseUrl = TextEditingController(text: connection.apiBaseUrl);
-    _token = TextEditingController(text: connection.apiToken);
+    _password = TextEditingController(text: '');
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
-    for (final controller in [_baseUrl, _token]) {
+    for (final controller in [_baseUrl, _password]) {
       controller.dispose();
     }
     super.dispose();
@@ -62,10 +63,63 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context.read<SettingsCubit>().updateConnection(
         current.copyWith(
           apiBaseUrl: _baseUrl.text.trim(),
-          apiToken: _token.text.trim(),
         ),
       );
     });
+  }
+
+  /// Exchanges the typed password for an API key via `POST /auth/token`.
+  Future<void> _fetchKey() async {
+    final base = _baseUrl.text.trim();
+    if (base.isEmpty) {
+      setState(() {
+        _pingResult = 'укажите api base url';
+        _pingOk = false;
+      });
+      return;
+    }
+    final password = _password.text;
+    if (password.isEmpty) {
+      setState(() {
+        _pingResult = 'введите пароль';
+        _pingOk = false;
+      });
+      return;
+    }
+    setState(() {
+      _fetchingKey = true;
+      _pingResult = null;
+    });
+    final api = HubApi(
+      connection: () => ConnectionSettings(apiBaseUrl: base),
+    );
+    try {
+      final key = await api.login(password);
+      if (!mounted) return;
+      final current = context.read<SettingsCubit>().state.settings.connection;
+      await context.read<SettingsCubit>().updateConnection(
+        current.copyWith(apiBaseUrl: base, apiToken: key),
+      );
+      if (!mounted) return;
+      _password.clear();
+      setState(() {
+        _pingResult = 'ключ получен · ${maskSecret(key)}';
+        _pingOk = true;
+      });
+    } on HubApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _pingResult = e.isUnauthorized
+            ? 'неверный пароль'
+            : e.statusCode == 503
+                  ? 'вход по паролю не настроен на хабе'
+                  : 'error: ${e.message}';
+        _pingOk = false;
+      });
+    } finally {
+      api.close();
+      if (mounted) setState(() => _fetchingKey = false);
+    }
   }
 
   /// One-shot probe of the server_hub API with the current form values.
@@ -82,11 +136,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _pinging = true;
       _pingResult = null;
     });
+    final token = context.read<SettingsCubit>().state.settings.connection.apiToken;
     final api = HubApi(
-      connection: () => ConnectionSettings(
-        apiBaseUrl: base,
-        apiToken: _token.text.trim(),
-      ),
+      connection: () => ConnectionSettings(apiBaseUrl: base, apiToken: token),
     );
     try {
       final status = await api.get('/status');
@@ -285,8 +337,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         color: palette.accent.withValues(alpha: 0.08),
                       ),
                       child: Text(
-                        'ключ хаба (ADMIN_KEY) даёт доступ и к чтению, и к управлению. '
-                        'нужен для подключения к /status, /logs и /actions.',
+                        'введите пароль администратора (ADMIN_PASSWORD) и нажмите GET KEY — '
+                        'хаб сам выдаст ключ хаба для чтения и управления.',
                         style: context.retroStyle(size: 11, color: palette.accent, glow: false),
                       ),
                     ),
@@ -298,18 +350,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     const SizedBox(height: 12),
                     _field('api base url', _baseUrl, hint: 'https://hub.905911.ru:8448'),
-                    _field('api token', _token, obscure: true, hint: 'ADMIN_KEY'),
+                    _field('password', _password, obscure: true, hint: 'ADMIN_PASSWORD', showStored: false),
                     const SizedBox(height: 8),
                     Row(
                       children: [
                         Expanded(
                           child: GlowText(
-                            connection.apiConfigured ? 'api: set' : 'api: unset',
+                            connection.apiToken.isNotEmpty
+                                ? 'key: ${maskSecret(connection.apiToken)}'
+                                : 'key: not set',
                             size: 11,
-                            color: connection.apiConfigured ? palette.success : palette.primaryDim,
+                            color: connection.apiToken.isNotEmpty ? palette.success : palette.primaryDim,
                             glow: false,
                           ),
                         ),
+                        RetroButton(
+                          label: _fetchingKey ? 'GET…' : 'GET KEY',
+                          dense: true,
+                          onPressed: _fetchingKey ? null : _fetchKey,
+                        ),
+                        const SizedBox(width: 6),
                         RetroButton(
                           label: _pinging ? 'PING…' : 'PING HUB',
                           dense: true,
@@ -412,6 +472,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     TextEditingController controller, {
     bool obscure = false,
     String? hint,
+    bool showStored = true,
   }) {
     final palette = context.palette;
     return Padding(
@@ -428,11 +489,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             controller: controller,
             obscureText: obscure,
             obscuringCharacter: '•',
-            onChanged: (_) => _scheduleSave(),
+            onChanged: obscure ? null : (_) => _scheduleSave(),
             style: context.retroStyle(size: 13, letterSpacing: 0.4),
             decoration: InputDecoration(hintText: hint),
           ),
-          if (obscure && controller.text.isNotEmpty)
+          if (obscure && showStored && controller.text.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 3),
               child: Text(

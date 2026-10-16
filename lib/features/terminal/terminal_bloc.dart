@@ -31,7 +31,12 @@ class TerminalBloc extends Bloc<TerminalEvent, TerminalState> {
     _subscription ??= _repository.logs().listen(
       (entry) => add(TerminalLineReceived(entry)),
     );
-    final history = await _repository.fetchLogHistory();
+    List<LogEntry> history;
+    try {
+      history = await _repository.fetchLogHistory();
+    } catch (e) {
+      history = [_line(LogLevel.error, 'history unavailable: $e', source: 'hub')];
+    }
     emit(state.copyWith(entries: _append(state.entries, history), loadingHistory: false));
   }
 
@@ -75,7 +80,7 @@ class TerminalBloc extends Bloc<TerminalEvent, TerminalState> {
       ),
     );
 
-    final output = await _repository.runCommand(command);
+    final output = await _runCommand(command);
 
     if (output == '\u0000clear') {
       emit(state.copyWith(entries: const [], executing: false));
@@ -94,6 +99,14 @@ class TerminalBloc extends Bloc<TerminalEvent, TerminalState> {
 
   void _onCleared(TerminalCleared event, Emitter<TerminalState> emit) {
     emit(state.copyWith(entries: const []));
+  }
+
+  Future<String> _runCommand(String command) async {
+    try {
+      return await _repository.runCommand(command);
+    } catch (e) {
+      return 'command failed: $e';
+    }
   }
 
   List<LogEntry> _append(List<LogEntry> base, List<LogEntry> extra) {
