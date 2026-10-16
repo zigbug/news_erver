@@ -21,6 +21,7 @@ Future<void> main() async {
   try {
     await Firebase.initializeApp();
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    talker.info('firebase ready');
   } catch (e, st) {
     talker.handle(e, st, 'firebase init failed (push disabled)');
   }

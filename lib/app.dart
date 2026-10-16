@@ -48,6 +48,9 @@ class _ConsoleGraph extends StatelessWidget {
         create: (context) => ApiServerRepository(context.read<HubApi>()),
         dispose: (repository) => repository.dispose(),
         child: RepositoryProvider<PushService>(
+          // Eager: nothing reads the service, so a lazy provider would never
+          // build it and start() would never run.
+          lazy: false,
           create: (context) =>
               PushService(context.read<ApiServerRepository>())..start(),
           dispose: (push) => push.dispose(),
