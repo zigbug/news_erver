@@ -72,7 +72,13 @@ class _TerminalLogScreenState extends State<TerminalLogScreen> {
                           glow: false,
                         ),
                       ),
-                      child: state.loadingHistory && lines.isEmpty
+                      child:
+                          (state.mode == TerminalMode.journal &&
+                              state.selectedSources.isEmpty)
+                          ? const _Waiting(
+                              text: 'источники выключены — включите чип ALL или один из источников',
+                            )
+                          : state.loadingHistory && lines.isEmpty
                           ? const _Waiting(text: 'reading log buffer…')
                           : ListView.builder(
                               controller: _scroll,
@@ -265,7 +271,7 @@ class _LevelFilterBar extends StatelessWidget {
           child: Row(
             children: [
               Text(
-                'filter:',
+                'levels:',
                 style: context.retroStyle(
                   size: 11,
                   color: palette.primaryDim,
@@ -273,7 +279,11 @@ class _LevelFilterBar extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              for (final level in LogLevel.values) ...[
+              for (final level in const [
+                LogLevel.info,
+                LogLevel.warn,
+                LogLevel.error,
+              ]) ...[
                 _LevelChip(
                   level: level,
                   visible: state.isVisible(level),
@@ -370,7 +380,7 @@ class _SourceFilterBar extends StatelessWidget {
                 label: 'ALL',
                 active: state.allSourcesSelected,
                 onTap: () => context.read<TerminalBloc>().add(
-                  const TerminalAllSourcesSelected(),
+                  const TerminalAllSourcesToggled(),
                 ),
               ),
               const SizedBox(width: 6),

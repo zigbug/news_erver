@@ -43,9 +43,10 @@ class TerminalSourceToggled extends TerminalEvent {
   List<Object?> get props => [source];
 }
 
-/// Re-selects every available source (the "ALL" chip).
-class TerminalAllSourcesSelected extends TerminalEvent {
-  const TerminalAllSourcesSelected();
+/// Toggles every available source: all on if not all selected, all off if they
+/// already are (the "ALL" chip).
+class TerminalAllSourcesToggled extends TerminalEvent {
+  const TerminalAllSourcesToggled();
 }
 
 class TerminalModeToggled extends TerminalEvent {

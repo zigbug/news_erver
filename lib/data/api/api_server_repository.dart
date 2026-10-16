@@ -14,7 +14,7 @@ import 'hub_api.dart';
 /// and `/logs` on timers and pushes the results into long-lived broadcast
 /// streams. Destructive operations map onto the hub's action allowlist.
 class ApiServerRepository implements ServerRepository {
-  ApiServerRepository(this._api) : _logInterval = const Duration(seconds: 2);
+  ApiServerRepository(this._api);
 
   /// Default log source for the terminal tail (a systemd unit or container).
   static const String defaultLogSource = 'server_hub';
@@ -60,7 +60,6 @@ class ApiServerRepository implements ServerRepository {
   ];
 
   final HubApi _api;
-  final Duration _logInterval;
 
   final _statusController = StreamController<ServerStatus>.broadcast();
   final _logController = StreamController<LogEntry>.broadcast();
@@ -97,7 +96,7 @@ class ApiServerRepository implements ServerRepository {
       final source = raw.trim();
       if (source.isNotEmpty && !next.contains(source)) next.add(source);
     }
-    if (next.isEmpty || _sameSources(next, _logSources)) return;
+    if (_sameSources(next, _logSources)) return;
     _logSources = next;
     _lastLogTs = 0;
     _seenLogs.clear();
@@ -244,6 +243,7 @@ class ApiServerRepository implements ServerRepository {
 
   @override
   Future<List<LogEntry>> fetchLogHistory({int limit = 40}) async {
+    if (_logSources.isEmpty) return const [];
     final json = await _api.get('/logs', query: _logQuery(limit));
     final lines = _parseLogLines(json);
     _seedLogCursor(lines);
@@ -279,6 +279,7 @@ class ApiServerRepository implements ServerRepository {
   }
 
   Future<String> _tailText(int limit) async {
+    if (_logSources.isEmpty) return '(нет выбранных источников)';
     final json = await _api.get('/logs', query: _logQuery(limit));
     final lines = _parseLogLines(json);
     if (lines.isEmpty) return '(пусто)';
@@ -336,7 +337,7 @@ class ApiServerRepository implements ServerRepository {
     _stopTimers();
     _polling = true;
     _scheduleStatusPoll();
-    _logTimer = Timer.periodic(_logInterval, (_) => _pollLogs());
+    _scheduleLogPoll();
   }
 
   /// Schedules the next `/status` poll from the *current* connection settings,
@@ -350,6 +351,17 @@ class ApiServerRepository implements ServerRepository {
     });
   }
 
+  /// Same as [_scheduleStatusPoll] but for the (heavier) merged log feed: it
+  /// queries every selected source per tick, so it has its own interval.
+  void _scheduleLogPoll() {
+    _logTimer?.cancel();
+    final seconds = _api.connection.logIntervalSeconds.clamp(2, 3600);
+    _logTimer = Timer(Duration(seconds: seconds), () async {
+      await _pollLogs();
+      if (_polling) _scheduleLogPoll();
+    });
+  }
+
   void _stopTimers() {
     _polling = false;
     _statusTimer?.cancel();
@@ -359,7 +371,7 @@ class ApiServerRepository implements ServerRepository {
   }
 
   Future<void> _pollLogs() async {
-    if (_logController.isClosed) return;
+    if (_logController.isClosed || _logSources.isEmpty) return;
     try {
       final json = await _api.get(
         '/logs',

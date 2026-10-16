@@ -15,7 +15,7 @@ class TerminalBloc extends Bloc<TerminalEvent, TerminalState> {
     on<TerminalLineReceived>(_onLineReceived);
     on<TerminalLevelToggled>(_onLevelToggled);
     on<TerminalSourceToggled>(_onSourceToggled);
-    on<TerminalAllSourcesSelected>(_onAllSourcesSelected);
+    on<TerminalAllSourcesToggled>(_onAllSourcesToggled);
     on<TerminalModeToggled>(_onModeToggled);
     on<TerminalCommandSubmitted>(_onCommandSubmitted);
     on<TerminalCleared>(_onCleared);
@@ -64,19 +64,17 @@ class TerminalBloc extends Bloc<TerminalEvent, TerminalState> {
   ) async {
     final selected = {...state.selectedSources};
     if (!selected.remove(event.source)) selected.add(event.source);
-    // Never allow an empty feed: the last chip stays on.
-    if (selected.isEmpty) return;
     await _applySources(emit, selected);
   }
 
-  Future<void> _onAllSourcesSelected(
-    TerminalAllSourcesSelected event,
+  Future<void> _onAllSourcesToggled(
+    TerminalAllSourcesToggled event,
     Emitter<TerminalState> emit,
   ) async {
-    final selected = state.availableSources.toSet();
-    if (selected.isEmpty || selected.length == state.selectedSources.length) {
-      return;
-    }
+    if (state.availableSources.isEmpty) return;
+    final allSelected =
+        state.selectedSources.length == state.availableSources.length;
+    final selected = allSelected ? <String>{} : {...state.availableSources};
     await _applySources(emit, selected);
   }
 
@@ -90,6 +88,16 @@ class TerminalBloc extends Bloc<TerminalEvent, TerminalState> {
         .where(selected.contains)
         .toList(growable: false);
     _repository.setLogSources(ordered);
+    if (ordered.isEmpty) {
+      emit(
+        state.copyWith(
+          selectedSources: selected,
+          entries: const [],
+          loadingHistory: false,
+        ),
+      );
+      return;
+    }
     emit(
       state.copyWith(
         selectedSources: selected,
