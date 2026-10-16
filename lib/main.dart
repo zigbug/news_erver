@@ -12,9 +12,23 @@ void main() {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
-  // Route every BLoC event/transition and every uncaught error to the logger,
-  // so the in-app log viewer is a complete trace of what the client did.
-  Bloc.observer = TalkerBlocObserver(talker: talker);
+  // Route BLoC events and uncaught errors to the logger. State churn is left
+  // out on purpose: StatusCubit emits on every /status poll and TerminalBloc on
+  // every tailed log line, so logging changes/transitions would bury the real
+  // trace under the very polling it exists to observe. User actions still show
+  // up as events (and as HTTP lines from HubApi).
+  Bloc.observer = TalkerBlocObserver(
+    talker: talker,
+    settings: TalkerBlocLoggerSettings(
+      printEvents: true,
+      printEventFullData: false,
+      printChanges: false,
+      printTransitions: false,
+      printStateFullData: false,
+      printCreations: false,
+      printClosings: false,
+    ),
+  );
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
     talker.handle(details.exception, details.stack);

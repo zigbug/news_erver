@@ -82,8 +82,15 @@ class HubApi {
     return uri.replace(queryParameters: {...uri.queryParameters, ...query});
   }
 
-  Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) =>
-      _send('GET', path, query: query);
+  /// [quiet] silences this call in the Talker history. Background polling
+  /// (`/status`, `/logs` tails) sets it, so a device idling for ten minutes
+  /// doesn't bury real events under a line every two seconds. Failures stay
+  /// visible through the repository's own `degraded` / `connect failed` logs.
+  Future<Map<String, dynamic>> get(
+    String path, {
+    Map<String, String>? query,
+    bool quiet = false,
+  }) => _send('GET', path, query: query, quiet: quiet);
 
   Future<Map<String, dynamic>> post(String path, {Object? body}) =>
       _send('POST', path, body: body);
@@ -93,6 +100,7 @@ class HubApi {
     String path, {
     Map<String, String>? query,
     Object? body,
+    bool quiet = false,
   }) async {
     final connection = _connection();
     final base = _normalize(connection.apiBaseUrl);
@@ -113,10 +121,12 @@ class HubApi {
       final streamed = await _client.send(request).timeout(timeout);
       response = await http.Response.fromStream(streamed);
     } on TimeoutException {
-      talker.warning('$method $uri → таймаут (${timeout.inSeconds}s)');
+      if (!quiet) {
+        talker.warning('$method $uri → таймаут (${timeout.inSeconds}s)');
+      }
       throw const HubApiException(null, 'таймаут ответа хаба');
     } catch (e) {
-      talker.error('$method $uri → нет связи: $e');
+      if (!quiet) talker.error('$method $uri → нет связи: $e');
       throw HubApiException(null, 'нет связи с хабом: $e');
     }
     stopwatch.stop();
@@ -125,15 +135,16 @@ class HubApi {
     final trace =
         '$method $uri → ${response.statusCode} (${stopwatch.elapsedMilliseconds}ms)';
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      final message =
-          _errorMessage(decoded) ?? 'HTTP ${response.statusCode}';
-      talker.warning('$trace · $message');
+      final message = _errorMessage(decoded) ?? 'HTTP ${response.statusCode}';
+      if (!quiet) talker.warning('$trace · $message');
       throw HubApiException(response.statusCode, message, body: decoded);
     }
-    if (apiKey.isEmpty && !path.startsWith('/auth/')) {
-      talker.info('$trace · нет X-API-Key (хаб ответит 401)');
-    } else {
-      talker.info(trace);
+    if (!quiet) {
+      if (apiKey.isEmpty && !path.startsWith('/auth/')) {
+        talker.info('$trace · нет X-API-Key (хаб ответит 401)');
+      } else {
+        talker.info(trace);
+      }
     }
 
     if (decoded is Map<String, dynamic>) return decoded;

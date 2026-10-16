@@ -59,6 +59,10 @@ class ApiServerRepository implements ServerRepository {
   int _lastLogTs = 0;
   final Set<String> _seenLogs = {};
 
+  /// True while the log tail is failing, so the outage is reported once
+  /// instead of on every tick (the ticks themselves are quiet).
+  bool _logPollDown = false;
+
   @override
   ServerStatus? get lastStatus => _last;
 
@@ -70,6 +74,7 @@ class ApiServerRepository implements ServerRepository {
     _logSource = next;
     _lastLogTs = 0;
     _seenLogs.clear();
+    _logPollDown = false;
   }
 
   @override
@@ -208,7 +213,7 @@ class ApiServerRepository implements ServerRepository {
 
   Future<void> _pollStatus() async {
     try {
-      await _refreshStatus();
+      await _refreshStatus(quiet: true);
       if (_link != LinkState.online) {
         _link = LinkState.online;
         _emitCurrent();
@@ -234,8 +239,10 @@ class ApiServerRepository implements ServerRepository {
         .join('\n');
   }
 
-  Future<void> _refreshStatus() async {
-    final json = await _api.get('/status');
+  /// [quiet] keeps the routine status poll out of the Talker history; the
+  /// caller logs its own transition instead (see [connect], [_pollStatus]).
+  Future<void> _refreshStatus({bool quiet = false}) async {
+    final json = await _api.get('/status', quiet: quiet);
     _raw = json;
     _emitCurrent();
   }
@@ -300,6 +307,7 @@ class ApiServerRepository implements ServerRepository {
     try {
       final json = await _api.get(
         '/logs',
+        quiet: true,
         query: {
           'source': _logSource,
           'limit': '200',
@@ -320,8 +328,14 @@ class ApiServerRepository implements ServerRepository {
         // dedupe set is safe.
         _seenLogs.clear();
       }
-    } catch (_) {
-      // Transient errors are ignored; the next tick retries.
+      _logPollDown = false;
+    } catch (e) {
+      // Ticks are quiet (they'd flood the history), so report the outage once.
+      // The next tick retries; recovery clears the flag.
+      if (!_logPollDown) {
+        _logPollDown = true;
+        talker.warning('log poll failed → tail paused: $e');
+      }
     }
   }
 
