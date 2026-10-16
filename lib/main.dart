@@ -1,5 +1,7 @@
 import 'dart:ui' show PlatformDispatcher;
 
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -7,10 +9,21 @@ import 'package:talker_bloc_logger/talker_bloc_logger.dart';
 
 import 'app.dart';
 import 'core/logging/app_logger.dart';
+import 'core/push/push_service.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+
+  // Firebase must be up before the push service reads from it. A failure here
+  // (e.g. a missing/invalid google-services.json) is logged rather than fatal:
+  // the console still runs, it just cannot receive push notifications.
+  try {
+    await Firebase.initializeApp();
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  } catch (e, st) {
+    talker.handle(e, st, 'firebase init failed (push disabled)');
+  }
 
   // Route BLoC events and uncaught errors to the logger. State churn is left
   // out on purpose: StatusCubit emits on every /status poll and TerminalBloc on

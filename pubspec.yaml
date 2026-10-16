@@ -19,6 +19,8 @@ dependencies:
   talker: ^5.1.20
   talker_flutter: ^5.1.20
   talker_bloc_logger: ^5.1.20
+  firebase_core: ^5.0.0
+  firebase_messaging: ^17.0.0
 
 dev_dependencies:
   flutter_test:

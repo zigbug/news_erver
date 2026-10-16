@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Firebase config (per-project; drop yours in locally, never commit)
+/android/app/google-services.json

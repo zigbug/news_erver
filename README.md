@@ -106,6 +106,8 @@ hub connection). Stack: Flutter 3.41 / Dart 3.11, `flutter_bloc` + `equatable`,
 - `http` — REST-клиент к `server_hub`
 - `talker` + `talker_flutter` + `talker_bloc_logger` — единый логгер приложения
   и встроенный просмотрщик логов
+- Firebase (`firebase_core`, `firebase_messaging`) — push-уведомления (FCM),
+  Android-only
 - Платформа: Android (первый приоритет)
 
 Шрифты: **VT323** (классический CRT, без кириллицы) + **JetBrains Mono**
@@ -132,6 +134,15 @@ flutter analyze
 flutter test
 ```
 
+### Firebase (push)
+
+Для сборки Android нужен `android/app/google-services.json` (проект
+`hub-83af9`, package `ru.server905911.hub`). Файл **не** коммитится — он в
+`.gitignore`, положи его локально. Без него сборка падает на плагине
+`com.google.gms.google-services` («No matching client found for package name»).
+Плагин подключён в `android/settings.gradle.kts` и `android/app/build.gradle.kts`,
+`applicationId`/`namespace` — `ru.server905911.hub`, `minSdk = 24`.
+
 ## Архитектура
 
 Слои разделены; сеть спрятана за интерфейсами репозиториев.
@@ -147,7 +158,8 @@ ui/        виджеты, экраны, shell
 
 **Точка подключения** — `lib/app.dart`. Там создаётся один общий `HubApi`
 (читает base URL и ключ из `SettingsCubit` на каждом запросе), поверх него —
-`ApiServerRepository` и `ApiChatRepository`. Bloc-граф строится один раз и живёт
+`ApiServerRepository`, `ApiChatRepository` и `PushService`. Bloc-граф строится
+один раз и живёт
 всю сессию: правка темы, CRT-эффектов или адреса хаба не пересобирает его, а
 значит не рвёт линию и не теряет фокус в SETUP.
 
@@ -166,6 +178,10 @@ abstract interface class ServerRepository {
   Future<void> clearCache();
   Future<String> runCommand(String command);      // только чтение
   Future<List<LogEntry>> fetchLogHistory({int limit = 40});
+  List<String> get logSources;
+  void setLogSources(List<String> sources);
+  Future<List<String>> availableLogSources();
+  Future<void> registerDevice(String token);       // push (FCM)
   void dispose();
 }
 
@@ -202,6 +218,27 @@ abstract interface class ChatRepository {
 либо `POST /actions/restart_container {name}`, `rebootServer()` →
 `POST /actions/reboot`. `clearCache()` на хабе не поддерживается и возвращает
 ошибку (показывается в журнале операций).
+
+## Push-уведомления (FCM)
+
+`PushService` (`lib/core/push/push_service.dart`) владеет FCM: спрашивает
+разрешение, держит device-токен и слушает сообщения.
+
+- Токен уходит на хаб (`POST /devices` `{token, platform: "android"}`) **только
+  после** успешного `connect()`: сервис подписан на `ServerRepository.status()`
+  и регистрируется на первом снапшоте `online`. Пока линии нет, консоль в
+  `/devices` не появляется.
+- Регистрация идемпотентна и не повторяется, пока не сменится токен
+  (`onTokenRefresh`), поэтому reconnect её не дублирует.
+- `disconnect`/смена ключа токен на хабе **не** удаляют — push-канал жив.
+- Foreground: системного баннера нет, сообщение пишется в Talker (`push ← …`);
+  tap по уведомлению (`onMessageOpenedApp`, `getInitialMessage`) — тоже в Talker.
+- Background/terminated: `firebaseMessagingBackgroundHandler` (top-level,
+  `@pragma('vm:entry-point')`), зарегистрирован в `main.dart` сразу после
+  `Firebase.initializeApp()`.
+- iOS не поддержан (Android-only).
+
+Тестовый push с сервера: `scripts/notify.sh` или `POST /publish`.
 
 ## Тема и CRT-эффекты
 
@@ -257,13 +294,14 @@ flutter test
 - [x] Вход по паролю: `GET KEY` → `POST /auth/token` → `X-API-Key`
 - [ ] Хранение ключа в защищённом хранилище (сейчас ключ лежит в
       `shared_preferences` открытым текстом)
-- [ ] Push-уведомления об инцидентах (FCM)
+- [x] Регистрация device-токена и приём FCM в клиенте (`PushService`)
 - [ ] iOS-таргет
 
 ## Заметки
 
 - Android-метка приложения — **Remote Console** (`android/app/src/main/AndroidManifest.xml`).
-- `applicationId` — `com.example.news_erver`.
+- `applicationId` / `namespace` — `ru.server905911.hub` (совпадает с package_name
+  в `google-services.json`), `minSdk = 24` (требование `firebase_messaging`).
 - Персист настроек — `<shared_preferences>/retro_settings_v1` (JSON).
 - При сборке APK возможен warning Kotlin-daemon (pub-cache на `C:`, проект на
   `D:`). На результат не влияет; при желании — `kotlin.incremental=false` в

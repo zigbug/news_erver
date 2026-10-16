@@ -122,6 +122,13 @@ class ApiServerRepository implements ServerRepository {
     return fallbackLogSources;
   }
 
+  @override
+  Future<void> registerDevice(String token) async {
+    final value = token.trim();
+    if (value.isEmpty) return;
+    await _api.post('/devices', body: {'token': value, 'platform': 'android'});
+  }
+
   static bool _sameSources(List<String> a, List<String> b) {
     if (a.length != b.length) return false;
     for (final source in a) {

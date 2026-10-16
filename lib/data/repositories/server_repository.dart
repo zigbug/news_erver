@@ -49,5 +49,9 @@ abstract interface class ServerRepository {
   /// Sources the hub can serve (falls back to a built-in list when offline).
   Future<List<String>> availableLogSources();
 
+  /// Registers this device's push token with the hub (`POST /devices`).
+  /// Idempotent on the hub side; an empty token is ignored.
+  Future<void> registerDevice(String token);
+
   void dispose();
 }

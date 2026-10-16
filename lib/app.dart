@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import 'core/push/push_service.dart';
 import 'core/theme/retro_theme.dart';
 import 'data/api/api_chat_repository.dart';
 import 'data/api/api_server_repository.dart';
@@ -46,33 +47,38 @@ class _ConsoleGraph extends StatelessWidget {
       child: RepositoryProvider<ApiServerRepository>(
         create: (context) => ApiServerRepository(context.read<HubApi>()),
         dispose: (repository) => repository.dispose(),
-        child: RepositoryProvider<ApiChatRepository>(
-          create: (context) => ApiChatRepository(
-            context.read<HubApi>(),
-            context.read<ApiServerRepository>(),
-          ),
-          child: MultiBlocProvider(
-            providers: [
-              BlocProvider(
-                create: (context) =>
-                    StatusCubit(context.read<ApiServerRepository>())..start(),
-              ),
-              BlocProvider(
-                create: (context) =>
-                    TerminalBloc(context.read<ApiServerRepository>())
-                      ..add(const TerminalStarted()),
-              ),
-              BlocProvider(
-                create: (context) =>
-                    ChatBloc(context.read<ApiChatRepository>())
-                      ..add(const ChatStarted()),
-              ),
-              BlocProvider(
-                create: (context) =>
-                    ControlCubit(context.read<ApiServerRepository>()),
-              ),
-            ],
-            child: const _ConfiguredApp(),
+        child: RepositoryProvider<PushService>(
+          create: (context) =>
+              PushService(context.read<ApiServerRepository>())..start(),
+          dispose: (push) => push.dispose(),
+          child: RepositoryProvider<ApiChatRepository>(
+            create: (context) => ApiChatRepository(
+              context.read<HubApi>(),
+              context.read<ApiServerRepository>(),
+            ),
+            child: MultiBlocProvider(
+              providers: [
+                BlocProvider(
+                  create: (context) =>
+                      StatusCubit(context.read<ApiServerRepository>())..start(),
+                ),
+                BlocProvider(
+                  create: (context) =>
+                      TerminalBloc(context.read<ApiServerRepository>())
+                        ..add(const TerminalStarted()),
+                ),
+                BlocProvider(
+                  create: (context) =>
+                      ChatBloc(context.read<ApiChatRepository>())
+                        ..add(const ChatStarted()),
+                ),
+                BlocProvider(
+                  create: (context) =>
+                      ControlCubit(context.read<ApiServerRepository>()),
+                ),
+              ],
+              child: const _ConfiguredApp(),
+            ),
           ),
         ),
       ),
