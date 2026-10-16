@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:talker_flutter/talker_flutter.dart';
 
+import '../../core/logging/app_logger.dart';
 import '../../core/models/server_status.dart';
 import '../../core/theme/retro_palette.dart';
 import '../../core/theme/retro_theme.dart';
@@ -80,6 +82,8 @@ class StatusStrip extends StatelessWidget {
                 ),
               const SizedBox(width: 12),
               const _Clock(),
+              const SizedBox(width: 4),
+              const _LogsButton(),
             ],
           ),
         );
@@ -118,6 +122,32 @@ class _ClockState extends State<_Clock> {
     return Text(
       clockOf(_now),
       style: context.retroStyle(size: 12, color: context.palette.accent),
+    );
+  }
+}
+
+/// Opens the in-app log viewer (Talker) so a dev can inspect HTTP calls,
+/// BLoC events and errors without a cable. Hides itself on press.
+class _LogsButton extends StatelessWidget {
+  const _LogsButton();
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return IconButton(
+      tooltip: 'логи приложения',
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+      padding: EdgeInsets.zero,
+      color: palette.primaryDim,
+      icon: Icon(Icons.receipt_long, size: 16),
+      onPressed: () {
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => TalkerScreen(talker: talker),
+          ),
+        );
+      },
     );
   }
 }

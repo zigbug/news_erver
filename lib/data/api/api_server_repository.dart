@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../../core/logging/app_logger.dart';
 import '../../core/models/log_entry.dart';
 import '../../core/models/server_status.dart';
 import '../../core/models/service_info.dart';
@@ -83,14 +84,16 @@ class ApiServerRepository implements ServerRepository {
     _link = LinkState.connecting;
     try {
       await _refreshStatus();
-    } catch (_) {
+    } catch (e) {
       _link = LinkState.offline;
       _emitOffline();
+      talker.warning('connect failed → offline: $e');
       rethrow;
     }
     _link = LinkState.online;
     _emitCurrent();
     _startTimers();
+    talker.info('connected · ${_last?.hostname ?? ""}');
   }
 
   @override
@@ -210,10 +213,11 @@ class ApiServerRepository implements ServerRepository {
         _link = LinkState.online;
         _emitCurrent();
       }
-    } catch (_) {
+    } catch (e) {
       if (_link == LinkState.online) {
         _link = LinkState.degraded;
         _emitCurrent();
+        talker.warning('status poll failed → degraded: $e');
       }
     }
   }

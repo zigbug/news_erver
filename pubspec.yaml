@@ -16,6 +16,9 @@ dependencies:
   equatable: ^2.0.7
   shared_preferences: ^2.5.3
   http: ^1.2.2
+  talker: ^5.1.20
+  talker_flutter: ^5.1.20
+  talker_bloc_logger: ^5.1.20
 
 dev_dependencies:
   flutter_test:

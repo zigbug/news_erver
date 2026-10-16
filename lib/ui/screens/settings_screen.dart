@@ -3,12 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../core/logging/app_logger.dart';
 import '../../core/models/app_settings.dart';
 import '../../core/theme/app_fonts.dart';
 import '../../core/theme/retro_palette.dart';
 import '../../core/theme/retro_palettes.dart';
 import '../../core/theme/retro_theme.dart';
 import '../../core/utils/formatters.dart';
+import '../../data/api/api_server_repository.dart';
 import '../../data/api/hub_api.dart';
 import '../../features/settings/settings_cubit.dart';
 import '../../features/settings/settings_state.dart';
@@ -106,6 +108,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _pingResult = 'ключ получен · ${maskSecret(key)}';
         _pingOk = true;
       });
+      // The link only boots once in AppShell.initState, so a key minted during
+      // this session would otherwise leave the app OFFLINE until a restart.
+      await _tryConnect();
     } on HubApiException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -119,6 +124,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       api.close();
       if (mounted) setState(() => _fetchingKey = false);
+    }
+  }
+
+  /// Brings the hub link up (or leaves it OFFLINE, already logged).
+  Future<void> _tryConnect() async {
+    if (!mounted) return;
+    try {
+      await context.read<ApiServerRepository>().connect();
+    } catch (e, st) {
+      // ApiServerRepository already logged this and emitted OFFLINE.
+      talker.handle(e, st, 'connect после GET KEY не удался');
     }
   }
 

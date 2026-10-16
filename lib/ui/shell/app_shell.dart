@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../core/logging/app_logger.dart';
 import '../../core/theme/retro_theme.dart';
 import '../../data/api/api_server_repository.dart';
 import '../../features/settings/settings_cubit.dart';
@@ -40,10 +41,18 @@ class _AppShellState extends State<AppShell> {
       // (no base URL, hub down) must not crash: the UI drops to OFFLINE.
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
+        final connection =
+            context.read<SettingsCubit>().state.settings.connection;
+        talker.info(
+          'connect → ${connection.apiBaseUrl.isEmpty ? "(base url пуст)" : connection.apiBaseUrl} · '
+          'key ${connection.apiToken.isEmpty ? "НЕТ" : "есть"}',
+        );
         try {
           await context.read<ApiServerRepository>().connect();
-        } catch (_) {
+          talker.info('connect ok');
+        } catch (e, st) {
           // Surfaced through the status stream as OFFLINE.
+          talker.handle(e, st, 'connect failed');
         }
       });
     }

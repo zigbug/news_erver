@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../../core/logging/app_logger.dart';
 import '../../core/models/app_settings.dart';
 
 /// Raised when the hub is unreachable or answers with a non-2xx status.
@@ -96,8 +97,9 @@ class HubApi {
     final connection = _connection();
     final base = _normalize(connection.apiBaseUrl);
     final apiKey = connection.apiToken.trim();
+    final uri = _uri(base, path, query);
 
-    final request = http.Request(method, _uri(base, path, query));
+    final request = http.Request(method, uri);
     request.headers['Accept'] = 'application/json';
     if (apiKey.isNotEmpty) request.headers['X-API-Key'] = apiKey;
     if (body != null) {
@@ -105,23 +107,33 @@ class HubApi {
       request.body = jsonEncode(body);
     }
 
+    final stopwatch = Stopwatch()..start();
     http.Response response;
     try {
       final streamed = await _client.send(request).timeout(timeout);
       response = await http.Response.fromStream(streamed);
     } on TimeoutException {
+      talker.warning('$method $uri → таймаут (${timeout.inSeconds}s)');
       throw const HubApiException(null, 'таймаут ответа хаба');
     } catch (e) {
+      talker.error('$method $uri → нет связи: $e');
       throw HubApiException(null, 'нет связи с хабом: $e');
     }
+    stopwatch.stop();
 
     final decoded = _decode(response.body);
+    final trace =
+        '$method $uri → ${response.statusCode} (${stopwatch.elapsedMilliseconds}ms)';
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw HubApiException(
-        response.statusCode,
-        _errorMessage(decoded) ?? 'HTTP ${response.statusCode}',
-        body: decoded,
-      );
+      final message =
+          _errorMessage(decoded) ?? 'HTTP ${response.statusCode}';
+      talker.warning('$trace · $message');
+      throw HubApiException(response.statusCode, message, body: decoded);
+    }
+    if (apiKey.isEmpty && !path.startsWith('/auth/')) {
+      talker.info('$trace · нет X-API-Key (хаб ответит 401)');
+    } else {
+      talker.info(trace);
     }
 
     if (decoded is Map<String, dynamic>) return decoded;

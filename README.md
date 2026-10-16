@@ -70,6 +70,24 @@ hub connection). Stack: Flutter 3.41 / Dart 3.11, `flutter_bloc` + `equatable`,
 
 Плюс boot-экран с инициализацией и автоподключением при старте.
 
+## Логи (Talker)
+
+Чтобы видеть, что реально происходит на устройстве (в т.ч. почему вкладки
+показывают `OFFLINE`), в приложение встроен **Talker**:
+
+- **просмотрщик** — кнопка `▤` в верхней строке (справа от часов) открывает
+  экран логов: история, фильтры и поиск по записям;
+- **HTTP** — `HubApi._send` логирует каждый запрос и ответ, например
+  `GET https://hub.905911.ru:8448/status → 200 (87ms)`, а также таймауты и
+  «нет связи»; сам `X-API-Key` и тело пароля в логи не пишутся;
+- **BLoC** — `TalkerBlocObserver` пишет события, переходы и ошибки блоков;
+- **ошибки** — `FlutterError.onError` и `PlatformDispatcher.onError` уходят
+  в тот же лог;
+- **подключение** — адрес хаба, есть ли ключ на момент `connect()` и его итог.
+
+Единый логгер — глобальный `talker` в `lib/core/logging/app_logger.dart`,
+все слои пишут именно в него.
+
 ## Стек
 
 - Flutter 3.41.7 / Dart 3.11.5 (stable)
@@ -78,6 +96,8 @@ hub connection). Stack: Flutter 3.41 / Dart 3.11, `flutter_bloc` + `equatable`,
 - `equatable` — модели
 - `shared_preferences` — персист настроек (ключ `retro_settings_v1`)
 - `http` — REST-клиент к `server_hub`
+- `talker` + `talker_flutter` + `talker_bloc_logger` — единый логгер приложения
+  и встроенный просмотрщик логов
 - Платформа: Android (первый приоритет)
 
 Шрифты: **VT323** (классический CRT, без кириллицы) + **JetBrains Mono**
@@ -109,7 +129,7 @@ flutter test
 Слои разделены; сеть спрятана за интерфейсами репозиториев.
 
 ```
-core/      модели, тема, утилиты
+core/      модели, тема, утилиты, логгер (logging/)
   data/
   repositories/  интерфейсы (ServerRepository, ChatRepository)
   api/           HubApi, ApiServerRepository / ApiChatRepository
@@ -159,6 +179,8 @@ abstract interface class ChatRepository {
 - `apiBaseUrl` — адрес хаба, например `https://hub.905911.ru:8448`;
 - `apiToken` — ключ хаба, уходит в `X-API-Key`; выдаётся кнопкой `GET KEY`
   через `POST /auth/token` (пароль вводится в SETUP, поле очищается после выдачи);
+  сразу после выдачи приложение подключается, иначе сессия осталась бы `OFFLINE`
+  до перезапуска;
 - `pollIntervalSeconds`, `autoConnect`.
 
 Поля `serverId` / `firebase*` сохранены в модели для обратной совместимости
