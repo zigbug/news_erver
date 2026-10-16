@@ -100,8 +100,8 @@ class PushService {
 
   void _onForeground(RemoteMessage message) {
     final notification = message.notification;
-    final title = notification?.title ?? message.data['title'] as String?;
-    final body = notification?.body ?? message.data['body'] as String?;
+    final title = notification?.title ?? message.data['title']?.toString();
+    final body = notification?.body ?? message.data['body']?.toString();
     talker.info(
       'push ← ${title ?? "(no title)"}${body == null ? "" : " · $body"}',
     );
