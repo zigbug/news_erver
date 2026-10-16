@@ -1,4 +1,5 @@
-/// Chat with the server-side bot.
+/// Chat with the status-bot.
+/// The concrete backend is [data/api/api_chat_repository.dart].
 abstract interface class ChatRepository {
   /// Returns the bot's answer for [prompt]. The presentation layer is free to
   /// render it with a typewriter effect.

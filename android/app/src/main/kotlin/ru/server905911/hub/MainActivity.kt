@@ -1,4 +1,4 @@
-package com.example.news_erver
+package ru.server905911.hub
 
 import io.flutter.embedding.android.FlutterActivity
 

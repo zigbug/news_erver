@@ -1,12 +1,13 @@
 plugins {
     id("com.android.application")
     id("kotlin-android")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    // Reads android/app/google-services.json (kept local, git-ignored).
+    id("com.google.gms.google-services")
     id("dev.flutter.flutter-gradle-plugin")
 }
 
 android {
-    namespace = "com.example.news_erver"
+    namespace = "ru.server905911.hub"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -20,11 +21,11 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.news_erver"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // Must match the package_name in android/app/google-services.json, or
+        // the google-services plugin fails the build.
+        applicationId = "ru.server905911.hub"
+        // firebase_messaging (via the Firebase Android BoM) needs API 24+.
+        minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

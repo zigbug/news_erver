@@ -13,6 +13,7 @@ class ConnectionSettings extends Equatable {
     this.apiBaseUrl = '',
     this.apiToken = '',
     this.pollIntervalSeconds = 5,
+    this.logIntervalSeconds = 10,
     this.autoConnect = true,
   });
 
@@ -30,6 +31,10 @@ class ConnectionSettings extends Equatable {
   final String apiToken;
 
   final int pollIntervalSeconds;
+
+  /// How often the TERMINAL journal is polled (seconds). Larger than the status
+  /// interval because the merged feed queries several sources per tick.
+  final int logIntervalSeconds;
   final bool autoConnect;
 
   bool get firebaseConfigured =>
@@ -40,10 +45,8 @@ class ConnectionSettings extends Equatable {
   /// 0..1 completeness of the connection form, used by the settings screen.
   double get completeness {
     final fields = <bool>[
-      serverId.trim().isNotEmpty,
-      firebaseProjectId.trim().isNotEmpty,
-      firebaseApiKey.trim().isNotEmpty,
       apiBaseUrl.trim().isNotEmpty,
+      apiToken.trim().isNotEmpty,
     ];
     return fields.where((f) => f).length / fields.length;
   }
@@ -56,6 +59,7 @@ class ConnectionSettings extends Equatable {
     String? apiBaseUrl,
     String? apiToken,
     int? pollIntervalSeconds,
+    int? logIntervalSeconds,
     bool? autoConnect,
   }) {
     return ConnectionSettings(
@@ -66,6 +70,7 @@ class ConnectionSettings extends Equatable {
       apiBaseUrl: apiBaseUrl ?? this.apiBaseUrl,
       apiToken: apiToken ?? this.apiToken,
       pollIntervalSeconds: pollIntervalSeconds ?? this.pollIntervalSeconds,
+      logIntervalSeconds: logIntervalSeconds ?? this.logIntervalSeconds,
       autoConnect: autoConnect ?? this.autoConnect,
     );
   }
@@ -78,6 +83,7 @@ class ConnectionSettings extends Equatable {
     'apiBaseUrl': apiBaseUrl,
     'apiToken': apiToken,
     'pollIntervalSeconds': pollIntervalSeconds,
+    'logIntervalSeconds': logIntervalSeconds,
     'autoConnect': autoConnect,
   };
 
@@ -90,6 +96,7 @@ class ConnectionSettings extends Equatable {
       apiBaseUrl: json['apiBaseUrl'] as String? ?? '',
       apiToken: json['apiToken'] as String? ?? '',
       pollIntervalSeconds: (json['pollIntervalSeconds'] as num?)?.toInt() ?? 5,
+      logIntervalSeconds: (json['logIntervalSeconds'] as num?)?.toInt() ?? 10,
       autoConnect: json['autoConnect'] as bool? ?? true,
     );
   }
@@ -103,6 +110,7 @@ class ConnectionSettings extends Equatable {
     apiBaseUrl,
     apiToken,
     pollIntervalSeconds,
+    logIntervalSeconds,
     autoConnect,
   ];
 }
