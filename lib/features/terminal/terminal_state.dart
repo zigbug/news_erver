@@ -20,6 +20,8 @@ class TerminalState extends Equatable {
     this.mode = TerminalMode.journal,
     this.loadingHistory = true,
     this.executing = false,
+    this.availableSources = const [],
+    this.selectedSources = const {},
   });
 
   /// Full buffer, oldest first.
@@ -36,6 +38,12 @@ class TerminalState extends Equatable {
   /// A command is currently running.
   final bool executing;
 
+  /// Log sources the hub can serve (chips in the filter bar).
+  final List<String> availableSources;
+
+  /// Subset of [availableSources] currently queried for the merged feed.
+  final Set<String> selectedSources;
+
   /// Entries the filter bar lets through (current mode only).
   List<LogEntry> get visible => entries
       .where((e) => _matchesMode(e) && !hidden.contains(e.level))
@@ -48,12 +56,21 @@ class TerminalState extends Equatable {
 
   bool isVisible(LogLevel level) => !hidden.contains(level);
 
+  bool isSourceSelected(String source) => selectedSources.contains(source);
+
+  /// True when every available source is selected.
+  bool get allSourcesSelected =>
+      availableSources.isNotEmpty &&
+      selectedSources.length == availableSources.length;
+
   TerminalState copyWith({
     List<LogEntry>? entries,
     Set<LogLevel>? hidden,
     TerminalMode? mode,
     bool? loadingHistory,
     bool? executing,
+    List<String>? availableSources,
+    Set<String>? selectedSources,
   }) {
     return TerminalState(
       entries: entries ?? this.entries,
@@ -61,9 +78,19 @@ class TerminalState extends Equatable {
       mode: mode ?? this.mode,
       loadingHistory: loadingHistory ?? this.loadingHistory,
       executing: executing ?? this.executing,
+      availableSources: availableSources ?? this.availableSources,
+      selectedSources: selectedSources ?? this.selectedSources,
     );
   }
 
   @override
-  List<Object?> get props => [entries, hidden, mode, loadingHistory, executing];
+  List<Object?> get props => [
+    entries,
+    hidden,
+    mode,
+    loadingHistory,
+    executing,
+    availableSources,
+    selectedSources,
+  ];
 }

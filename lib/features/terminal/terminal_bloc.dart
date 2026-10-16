@@ -14,6 +14,8 @@ class TerminalBloc extends Bloc<TerminalEvent, TerminalState> {
     on<TerminalStarted>(_onStarted);
     on<TerminalLineReceived>(_onLineReceived);
     on<TerminalLevelToggled>(_onLevelToggled);
+    on<TerminalSourceToggled>(_onSourceToggled);
+    on<TerminalAllSourcesSelected>(_onAllSourcesSelected);
     on<TerminalModeToggled>(_onModeToggled);
     on<TerminalCommandSubmitted>(_onCommandSubmitted);
     on<TerminalCleared>(_onCleared);
@@ -31,13 +33,13 @@ class TerminalBloc extends Bloc<TerminalEvent, TerminalState> {
     _subscription ??= _repository.logs().listen(
       (entry) => add(TerminalLineReceived(entry)),
     );
-    List<LogEntry> history;
-    try {
-      history = await _repository.fetchLogHistory();
-    } catch (e) {
-      history = [_line(LogLevel.error, 'history unavailable: $e', source: 'hub')];
-    }
-    emit(state.copyWith(entries: _append(state.entries, history), loadingHistory: false));
+    final available = await _repository.availableLogSources();
+    final selected = available.toSet();
+    _repository.setLogSources(available);
+    emit(
+      state.copyWith(availableSources: available, selectedSources: selected),
+    );
+    await _reloadHistory(emit, selectedSources: selected);
   }
 
   void _onLineReceived(
@@ -56,10 +58,70 @@ class TerminalBloc extends Bloc<TerminalEvent, TerminalState> {
     emit(state.copyWith(hidden: hidden));
   }
 
-  void _onModeToggled(
-    TerminalModeToggled event,
+  Future<void> _onSourceToggled(
+    TerminalSourceToggled event,
     Emitter<TerminalState> emit,
-  ) {
+  ) async {
+    final selected = {...state.selectedSources};
+    if (!selected.remove(event.source)) selected.add(event.source);
+    // Never allow an empty feed: the last chip stays on.
+    if (selected.isEmpty) return;
+    await _applySources(emit, selected);
+  }
+
+  Future<void> _onAllSourcesSelected(
+    TerminalAllSourcesSelected event,
+    Emitter<TerminalState> emit,
+  ) async {
+    final selected = state.availableSources.toSet();
+    if (selected.isEmpty || selected.length == state.selectedSources.length) {
+      return;
+    }
+    await _applySources(emit, selected);
+  }
+
+  /// Persists the new selection on the repository and reloads the buffer so the
+  /// feed reflects exactly the chosen sources (no stale lines).
+  Future<void> _applySources(
+    Emitter<TerminalState> emit,
+    Set<String> selected,
+  ) async {
+    final ordered = state.availableSources
+        .where(selected.contains)
+        .toList(growable: false);
+    _repository.setLogSources(ordered);
+    emit(
+      state.copyWith(
+        selectedSources: selected,
+        entries: const [],
+        loadingHistory: true,
+      ),
+    );
+    await _reloadHistory(emit, selectedSources: selected);
+  }
+
+  Future<void> _reloadHistory(
+    Emitter<TerminalState> emit, {
+    required Set<String> selectedSources,
+  }) async {
+    List<LogEntry> history;
+    try {
+      history = await _repository.fetchLogHistory();
+    } catch (e) {
+      history = [
+        _line(LogLevel.error, 'history unavailable: $e', source: 'hub'),
+      ];
+    }
+    emit(
+      state.copyWith(
+        entries: _append(state.entries, history),
+        loadingHistory: false,
+        selectedSources: selectedSources,
+      ),
+    );
+  }
+
+  void _onModeToggled(TerminalModeToggled event, Emitter<TerminalState> emit) {
     if (state.mode == event.mode) return;
     emit(state.copyWith(mode: event.mode));
   }
@@ -94,7 +156,9 @@ class TerminalBloc extends Bloc<TerminalEvent, TerminalState> {
               .map((l) => _line(LogLevel.trace, l))
               .toList(growable: false);
 
-    emit(state.copyWith(entries: _append(state.entries, lines), executing: false));
+    emit(
+      state.copyWith(entries: _append(state.entries, lines), executing: false),
+    );
   }
 
   void _onCleared(TerminalCleared event, Emitter<TerminalState> emit) {

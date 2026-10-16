@@ -60,17 +60,25 @@ class _TerminalLogScreenState extends State<TerminalLogScreen> {
                     return TerminalPanel(
                       title: shell ? 'shell · read-only' : 'live log · tail -f',
                       expand: true,
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 6,
+                      ),
                       trailing: Text(
                         '${lines.length} lines',
-                        style: context.retroStyle(size: 10, color: palette.primaryDim, glow: false),
+                        style: context.retroStyle(
+                          size: 10,
+                          color: palette.primaryDim,
+                          glow: false,
+                        ),
                       ),
                       child: state.loadingHistory && lines.isEmpty
                           ? const _Waiting(text: 'reading log buffer…')
                           : ListView.builder(
                               controller: _scroll,
                               itemCount: lines.length,
-                              itemBuilder: (context, i) => _LogLineView(lines[i]),
+                              itemBuilder: (context, i) =>
+                                  _LogLineView(lines[i]),
                             ),
                     );
                   },
@@ -85,7 +93,9 @@ class _TerminalLogScreenState extends State<TerminalLogScreen> {
                     busy: state.executing,
                     hint: 'команда… (help)',
                     onSubmitted: (value) {
-                      context.read<TerminalBloc>().add(TerminalCommandSubmitted(value));
+                      context.read<TerminalBloc>().add(
+                        TerminalCommandSubmitted(value),
+                      );
                       _input.clear();
                       _scrollToBottom();
                     },
@@ -94,7 +104,11 @@ class _TerminalLogScreenState extends State<TerminalLogScreen> {
               else
                 Text(
                   'journal · только чтение. переключитесь в SHELL, чтобы ввести команду.',
-                  style: context.retroStyle(size: 10, color: palette.primaryDim, glow: false),
+                  style: context.retroStyle(
+                    size: 10,
+                    color: palette.primaryDim,
+                    glow: false,
+                  ),
                 ),
             ],
           );
@@ -123,16 +137,20 @@ class _ModeBar extends StatelessWidget {
                     child: _ModeTab(
                       mode: mode,
                       active: state.mode == mode,
-                      onTap: () =>
-                          context.read<TerminalBloc>().add(TerminalModeToggled(mode)),
+                      onTap: () => context.read<TerminalBloc>().add(
+                        TerminalModeToggled(mode),
+                      ),
                     ),
                   ),
-                  if (mode != TerminalMode.values.last) const SizedBox(width: 8),
+                  if (mode != TerminalMode.values.last)
+                    const SizedBox(width: 8),
                 ],
               ],
             ),
             if (state.mode == TerminalMode.journal) ...[
               const SizedBox(height: 8),
+              const _SourceFilterBar(),
+              const SizedBox(height: 6),
               const _LevelFilterBar(),
             ],
           ],
@@ -143,7 +161,11 @@ class _ModeBar extends StatelessWidget {
 }
 
 class _ModeTab extends StatelessWidget {
-  const _ModeTab({required this.mode, required this.active, required this.onTap});
+  const _ModeTab({
+    required this.mode,
+    required this.active,
+    required this.onTap,
+  });
 
   final TerminalMode mode;
   final bool active;
@@ -159,7 +181,9 @@ class _ModeTab extends StatelessWidget {
         alignment: Alignment.center,
         decoration: BoxDecoration(
           border: Border.all(color: active ? palette.accent : palette.border),
-          color: active ? palette.accent.withValues(alpha: 0.12) : Colors.transparent,
+          color: active
+              ? palette.accent.withValues(alpha: 0.12)
+              : Colors.transparent,
         ),
         child: Text(
           mode.label,
@@ -185,7 +209,12 @@ class _LogLineView extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final isPrompt = entry.source == 'prompt';
-    final dim = context.retroStyle(size: 11, color: palette.primaryDim, glow: false, letterSpacing: 0);
+    final dim = context.retroStyle(
+      size: 11,
+      color: palette.primaryDim,
+      glow: false,
+      letterSpacing: 0,
+    );
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 1.5),
@@ -199,7 +228,9 @@ class _LogLineView extends StatelessWidget {
             child: Text(
               entry.source,
               overflow: TextOverflow.ellipsis,
-              style: dim.copyWith(color: isPrompt ? palette.accent : palette.primaryDim),
+              style: dim.copyWith(
+                color: isPrompt ? palette.accent : palette.primaryDim,
+              ),
             ),
           ),
           Expanded(
@@ -207,7 +238,8 @@ class _LogLineView extends StatelessWidget {
               entry.message,
               size: 12.5,
               letterSpacing: 0.2,
-              glow: entry.level == LogLevel.error || entry.level == LogLevel.warn,
+              glow:
+                  entry.level == LogLevel.error || entry.level == LogLevel.warn,
               color: isPrompt
                   ? palette.accent
                   : logLevelColor(palette, entry.level),
@@ -234,14 +266,20 @@ class _LevelFilterBar extends StatelessWidget {
             children: [
               Text(
                 'filter:',
-                style: context.retroStyle(size: 11, color: palette.primaryDim, glow: false),
+                style: context.retroStyle(
+                  size: 11,
+                  color: palette.primaryDim,
+                  glow: false,
+                ),
               ),
               const SizedBox(width: 8),
               for (final level in LogLevel.values) ...[
                 _LevelChip(
                   level: level,
                   visible: state.isVisible(level),
-                  onTap: () => context.read<TerminalBloc>().add(TerminalLevelToggled(level)),
+                  onTap: () => context.read<TerminalBloc>().add(
+                    TerminalLevelToggled(level),
+                  ),
                 ),
                 const SizedBox(width: 6),
               ],
@@ -250,7 +288,8 @@ class _LevelFilterBar extends StatelessWidget {
                 level: LogLevel.info,
                 visible: true,
                 label: 'CLEAR',
-                onTap: () => context.read<TerminalBloc>().add(const TerminalCleared()),
+                onTap: () =>
+                    context.read<TerminalBloc>().add(const TerminalCleared()),
               ),
             ],
           ),
@@ -294,6 +333,97 @@ class _LevelChip extends StatelessWidget {
             glow: false,
             letterSpacing: 1.0,
             decoration: visible ? null : TextDecoration.lineThrough,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Horizontal chip bar selecting which log sources feed the merged journal.
+class _SourceFilterBar extends StatelessWidget {
+  const _SourceFilterBar();
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return BlocBuilder<TerminalBloc, TerminalState>(
+      buildWhen: (a, b) =>
+          a.availableSources != b.availableSources ||
+          a.selectedSources != b.selectedSources,
+      builder: (context, state) {
+        if (state.availableSources.isEmpty) return const SizedBox.shrink();
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              Text(
+                'sources:',
+                style: context.retroStyle(
+                  size: 11,
+                  color: palette.primaryDim,
+                  glow: false,
+                ),
+              ),
+              const SizedBox(width: 8),
+              _SourceChip(
+                label: 'ALL',
+                active: state.allSourcesSelected,
+                onTap: () => context.read<TerminalBloc>().add(
+                  const TerminalAllSourcesSelected(),
+                ),
+              ),
+              const SizedBox(width: 6),
+              for (final source in state.availableSources) ...[
+                _SourceChip(
+                  label: source,
+                  active: state.isSourceSelected(source),
+                  onTap: () => context.read<TerminalBloc>().add(
+                    TerminalSourceToggled(source),
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SourceChip extends StatelessWidget {
+  const _SourceChip({
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final color = active ? palette.accent : palette.primaryDim;
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+        decoration: BoxDecoration(
+          border: Border.all(color: active ? color : palette.border),
+          color: active ? color.withValues(alpha: 0.12) : Colors.transparent,
+        ),
+        child: Text(
+          label,
+          style: context.retroStyle(
+            size: 10,
+            weight: FontWeight.w700,
+            color: color,
+            glow: false,
+            letterSpacing: 1.0,
+            decoration: active ? null : TextDecoration.lineThrough,
           ),
         ),
       ),

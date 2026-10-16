@@ -46,8 +46,10 @@ hub connection). Stack: Flutter 3.41 / Dart 3.11, `flutter_bloc` + `equatable`,
 
 - **CRT-эстетика** — палитры, фосфорное свечение текста, скан-линии, виньетка и
   мерцание трубки. Все эффекты отключаются в SETUP.
-- **Живой журнал** — поток логов с уровнями (`trace/debug/info/warn/error`),
-  фильтр по уровням, автоскролл; источник — `/logs` хаба.
+- **Живой журнал** — сводный поток событий сервера: несколько источников сразу
+  (`server_hub`, `ssh`, `nginx`, `docker`, `mtprotoproxy`, контейнеры…), фильтр
+  по чипам-источникам и уровням (`trace/debug/info/warn/error`), автоскролл.
+  Источник — `/logs` хаба (сводный режим по умолчанию: выбраны все источники).
 - **Терминал** — переключатель режимов: `JOURNAL` (хвост журнала) и `SHELL`
   (read-only командная строка); деструктив намеренно запрещён.
 - **Телеметрия** — CPU, память, диск, load average, состояние сервисов,
@@ -193,7 +195,9 @@ abstract interface class ChatRepository {
 формата хранения, но в UI и логике больше не используются.
 
 Маппинг на API хаба: `login()` → `POST /auth/token`, `status()` → `GET /status`,
-`logs()` → `GET /logs?source=…&since_ms=…`, `fetchLogHistory()` → `GET /logs?limit=…`,
+`logs()` → `GET /logs?sources=a,b,c&since_ms=…` (сводная лента),
+`fetchLogHistory()` → `GET /logs?sources=a,b,c&limit=…` (один источник — одиночный
+ответ, несколько — `kind: "mixed"`), `availableLogSources()` → `GET /logs/sources`,
 `restartService(name)` → `POST /actions/restart_{nginx,docker,mtproto,searx_mcp}`
 либо `POST /actions/restart_container {name}`, `rebootServer()` →
 `POST /actions/reboot`. `clearCache()` на хабе не поддерживается и возвращает

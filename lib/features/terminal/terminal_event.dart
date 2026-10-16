@@ -33,6 +33,21 @@ class TerminalLevelToggled extends TerminalEvent {
   List<Object?> get props => [level];
 }
 
+/// Adds or removes one log source from the merged feed.
+class TerminalSourceToggled extends TerminalEvent {
+  const TerminalSourceToggled(this.source);
+
+  final String source;
+
+  @override
+  List<Object?> get props => [source];
+}
+
+/// Re-selects every available source (the "ALL" chip).
+class TerminalAllSourcesSelected extends TerminalEvent {
+  const TerminalAllSourcesSelected();
+}
+
 class TerminalModeToggled extends TerminalEvent {
   const TerminalModeToggled(this.mode);
 

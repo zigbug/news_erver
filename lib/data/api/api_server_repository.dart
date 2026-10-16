@@ -19,6 +19,24 @@ class ApiServerRepository implements ServerRepository {
   /// Default log source for the terminal tail (a systemd unit or container).
   static const String defaultLogSource = 'server_hub';
 
+  /// Built-in source list used when `GET /logs/sources` is unreachable. Kept in
+  /// the same order the hub reports them (systemd units, then containers).
+  static const List<String> fallbackLogSources = [
+    'server_hub',
+    'nginx',
+    'docker',
+    'searxng-mcp',
+    'mtprotoproxy',
+    'ssh',
+    'projects-feed.timer',
+    'assistant-backend-1',
+    'assistant-mcp-1',
+    'ai-server',
+    'mtg',
+    'ntfy',
+    'searxng',
+  ];
+
   /// Sentinel used by [ServerStatus.temperature] when the host exposes no
   /// thermal sensor (a VPS does not). The STATUS screen renders `—` for 0.
   static const double noTemperature = 0;
@@ -55,7 +73,6 @@ class ApiServerRepository implements ServerRepository {
   Map<String, dynamic>? _raw;
   ServerStatus? _last;
 
-  String _logSource = defaultLogSource;
   int _lastLogTs = 0;
   final Set<String> _seenLogs = {};
 
@@ -66,15 +83,52 @@ class ApiServerRepository implements ServerRepository {
   @override
   ServerStatus? get lastStatus => _last;
 
-  /// Log source currently tailed by [logs] (changeable before connecting).
-  String get logSource => _logSource;
-  set logSource(String value) {
-    final next = value.trim();
-    if (next.isEmpty || next == _logSource) return;
-    _logSource = next;
+  /// Log sources currently tailed by [logs] (changeable before connecting).
+  @override
+  List<String> get logSources => List.unmodifiable(_logSources);
+  List<String> _logSources = const [defaultLogSource];
+
+  /// Resets the cursor whenever the source set changes so the feed restarts
+  /// cleanly (no stale lines from the previous selection).
+  @override
+  void setLogSources(List<String> sources) {
+    final next = <String>[];
+    for (final raw in sources) {
+      final source = raw.trim();
+      if (source.isNotEmpty && !next.contains(source)) next.add(source);
+    }
+    if (next.isEmpty || _sameSources(next, _logSources)) return;
+    _logSources = next;
     _lastLogTs = 0;
     _seenLogs.clear();
     _logPollDown = false;
+  }
+
+  @override
+  Future<List<String>> availableLogSources() async {
+    try {
+      final json = await _api.get('/logs/sources', quiet: true);
+      final raw = json['sources'];
+      if (raw is List) {
+        final names = <String>[];
+        for (final item in raw) {
+          final name = item is Map ? item['name'] : item;
+          if (name is String && name.isNotEmpty) names.add(name);
+        }
+        if (names.isNotEmpty) return names;
+      }
+    } catch (e) {
+      talker.warning('log sources unavailable → local list: $e');
+    }
+    return fallbackLogSources;
+  }
+
+  static bool _sameSources(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (final source in a) {
+      if (!b.contains(source)) return false;
+    }
+    return true;
   }
 
   @override
@@ -190,10 +244,7 @@ class ApiServerRepository implements ServerRepository {
 
   @override
   Future<List<LogEntry>> fetchLogHistory({int limit = 40}) async {
-    final json = await _api.get(
-      '/logs',
-      query: {'source': _logSource, 'limit': '$limit'},
-    );
+    final json = await _api.get('/logs', query: _logQuery(limit));
     final lines = _parseLogLines(json);
     _seedLogCursor(lines);
     return lines;
@@ -228,16 +279,21 @@ class ApiServerRepository implements ServerRepository {
   }
 
   Future<String> _tailText(int limit) async {
-    final json = await _api.get(
-      '/logs',
-      query: {'source': _logSource, 'limit': '$limit'},
-    );
+    final json = await _api.get('/logs', query: _logQuery(limit));
     final lines = _parseLogLines(json);
     if (lines.isEmpty) return '(пусто)';
     return lines
         .map((e) => '${e.clock} ${e.level.label.padRight(5)} ${e.message}')
         .join('\n');
   }
+
+  /// Query params for `/logs`. Always sends the whole selection as a
+  /// comma-separated `sources` list; the hub returns the merged feed (or a
+  /// single-source payload when only one is selected).
+  Map<String, String> _logQuery(int limit) => {
+    'sources': _logSources.join(','),
+    'limit': '$limit',
+  };
 
   /// [quiet] keeps the routine status poll out of the Talker history; the
   /// caller logs its own transition instead (see [connect], [_pollStatus]).
@@ -309,8 +365,7 @@ class ApiServerRepository implements ServerRepository {
         '/logs',
         quiet: true,
         query: {
-          'source': _logSource,
-          'limit': '200',
+          ..._logQuery(200),
           if (_lastLogTs > 0) 'since_ms': '$_lastLogTs',
         },
       );
@@ -368,7 +423,9 @@ class ApiServerRepository implements ServerRepository {
           id: 'hub-$ts-$i',
           timestamp: timestamp,
           level: LogLevel.byName(line['level'] as String?),
-          source: (line['source'] as String?) ?? _logSource,
+          source:
+              (line['source'] as String?) ??
+              (_logSources.isNotEmpty ? _logSources.first : defaultLogSource),
           message: (line['message'] as String?) ?? '',
         ),
       );
