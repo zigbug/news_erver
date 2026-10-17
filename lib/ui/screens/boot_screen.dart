@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme/retro_theme.dart';
 import '../../core/utils/formatters.dart';
 
-/// Fake POST sequence shown while settings are being restored from disk.
+/// Boot screen shown while preferences are restored.
 class BootScreen extends StatefulWidget {
   const BootScreen({super.key});
 
@@ -53,7 +53,7 @@ class _BootScreenState extends State<BootScreen>
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '(c) retro systems · demo build · no backend attached',
+                    '(c) server_hub · hud console · set api url+key in SETUP',
                     style: context.retroStyle(size: 11, color: palette.primaryDim, glow: false),
                   ),
                   const SizedBox(height: 18),

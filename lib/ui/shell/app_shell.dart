@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../core/logging/app_logger.dart';
 import '../../core/theme/retro_theme.dart';
-import '../../data/repositories/server_repository.dart';
+import '../../data/api/api_server_repository.dart';
 import '../../features/settings/settings_cubit.dart';
 import '../screens/chat_screen.dart';
 import '../screens/control_screen.dart';
@@ -33,11 +34,26 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
-    final autoConnect = context.read<SettingsCubit>().state.settings.connection.autoConnect;
+    final autoConnect =
+        context.read<SettingsCubit>().state.settings.connection.autoConnect;
     if (autoConnect) {
-      // Kick the link up once the first frame is on screen.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) context.read<ServerRepository>().connect();
+      // Kick the link up once the first frame is on screen. A failed connect
+      // (no base URL, hub down) must not crash: the UI drops to OFFLINE.
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        final connection =
+            context.read<SettingsCubit>().state.settings.connection;
+        talker.info(
+          'connect → ${connection.apiBaseUrl.isEmpty ? "(base url пуст)" : connection.apiBaseUrl} · '
+          'key ${connection.apiToken.isEmpty ? "НЕТ" : "есть"}',
+        );
+        try {
+          await context.read<ApiServerRepository>().connect();
+          talker.info('connect ok');
+        } catch (e, st) {
+          // Surfaced through the status stream as OFFLINE.
+          talker.handle(e, st, 'connect failed');
+        }
       });
     }
   }

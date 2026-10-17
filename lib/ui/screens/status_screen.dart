@@ -58,7 +58,9 @@ class StatusScreen extends StatelessWidget {
                     ),
                     RetroKeyValue(
                       label: 'temp',
-                      value: '${status.temperature.toStringAsFixed(1)} °C',
+                      value: status.temperature > 0
+                          ? '${status.temperature.toStringAsFixed(1)} °C'
+                          : '— (нет датчика)',
                       valueColor: status.temperature > 75 ? context.palette.warning : null,
                     ),
                     RetroKeyValue(
