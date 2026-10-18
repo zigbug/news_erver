@@ -1,15 +1,13 @@
-import 'package:flutter/material.dart';
-
+﻿import 'package:flutter/material.dart';
 import '../../core/theme/retro_theme.dart';
-import 'blinking_cursor.dart';
 
-/// `>` prompt field used by the terminal and the chat screen.
+/// > prompt field used by the terminal and the chat screen.
 class RetroPromptField extends StatelessWidget {
   const RetroPromptField({
     super.key,
     required this.controller,
     required this.onSubmitted,
-    this.hint = 'введите команду…',
+    this.hint = 'awaiting input',
     this.enabled = true,
     this.busy = false,
     this.actionLabel = 'RUN',
@@ -42,6 +40,7 @@ class RetroPromptField extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: TextField(
+              showCursor: true,
               controller: controller,
               enabled: enabled && !busy,
               textInputAction: TextInputAction.send,
@@ -50,7 +49,7 @@ class RetroPromptField extends StatelessWidget {
                 onSubmitted(value);
               },
               style: context.retroStyle(size: 14, color: palette.primary, letterSpacing: 0.4),
-              cursorColor: palette.accent,
+              cursorColor: color,
               cursorWidth: 8,
               decoration: InputDecoration(
                 isDense: true,
@@ -75,7 +74,7 @@ class RetroPromptField extends StatelessWidget {
                           ),
                         ),
                       )
-                    : const BlinkingCursor(),
+                    : null,
                 suffixIconConstraints: const BoxConstraints(minWidth: 20, minHeight: 20),
               ),
             ),

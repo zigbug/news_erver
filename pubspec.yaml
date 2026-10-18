@@ -1,4 +1,4 @@
-name: news_erver
+﻿name: news_erver
 description: "Retro terminal control panel for a remote server."
 publish_to: 'none'
 
@@ -27,12 +27,14 @@ dev_dependencies:
     sdk: flutter
 
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
 
   assets:
     - assets/fonts/
+    - assets/images/
 
   fonts:
     - family: VT323
