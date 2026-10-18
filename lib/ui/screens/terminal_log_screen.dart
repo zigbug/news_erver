@@ -58,7 +58,7 @@ class _TerminalLogScreenState extends State<TerminalLogScreen> {
                   builder: (context, state) {
                     final lines = state.visible;
                     return TerminalPanel(
-                      title: shell ? 'shell · read-only' : 'live log · tail -f',
+                      title: shell ? 'shell · cmd' : 'live log · tail -f',
                       expand: true,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 8,
@@ -76,7 +76,8 @@ class _TerminalLogScreenState extends State<TerminalLogScreen> {
                           (state.mode == TerminalMode.journal &&
                               state.selectedSources.isEmpty)
                           ? const _Waiting(
-                              text: 'источники выключены — включите чип ALL или один из источников',
+                              text:
+                                  'источники выключены — включите чип ALL или один из источников',
                             )
                           : state.loadingHistory && lines.isEmpty
                           ? const _Waiting(text: 'reading log buffer…')
@@ -124,7 +125,7 @@ class _TerminalLogScreenState extends State<TerminalLogScreen> {
   }
 }
 
-/// Switches between the read-only server journal and the read-only shell prompt.
+/// Switches between the server journal and the shell (command input).
 class _ModeBar extends StatelessWidget {
   const _ModeBar();
 
@@ -215,6 +216,22 @@ class _LogLineView extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final isPrompt = entry.source == 'prompt';
+
+    final message = GlowText(
+      entry.message,
+      size: 12.5,
+      letterSpacing: 0.2,
+      glow: entry.level == LogLevel.error || entry.level == LogLevel.warn,
+      color: isPrompt ? palette.accent : logLevelColor(palette, entry.level),
+    );
+
+    if (entry.source == 'shell' || isPrompt) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 1.5),
+        child: message,
+      );
+    }
+
     final dim = context.retroStyle(
       size: 11,
       color: palette.primaryDim,
@@ -239,18 +256,7 @@ class _LogLineView extends StatelessWidget {
               ),
             ),
           ),
-          Expanded(
-            child: GlowText(
-              entry.message,
-              size: 12.5,
-              letterSpacing: 0.2,
-              glow:
-                  entry.level == LogLevel.error || entry.level == LogLevel.warn,
-              color: isPrompt
-                  ? palette.accent
-                  : logLevelColor(palette, entry.level),
-            ),
-          ),
+          Expanded(child: message),
         ],
       ),
     );
