@@ -30,11 +30,18 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
-  void _scrollToBottom() {
+  /// Scrolls to the newest line, but only when the transcript is already
+  /// near the bottom — during an SSE stream events arrive several times a
+  /// second and must not yank the view away from a message the operator
+  /// scrolled up to read.
+  void _scrollToBottom({bool force = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scroll.hasClients) return;
+      final position = _scroll.position;
+      final nearBottom = position.maxScrollExtent - position.pixels < 120;
+      if (!force && !nearBottom) return;
       _scroll.animateTo(
-        _scroll.position.maxScrollExtent,
+        position.maxScrollExtent,
         duration: const Duration(milliseconds: 180),
         curve: Curves.easeOut,
       );
@@ -51,14 +58,16 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           Expanded(
             child: BlocConsumer<ChatBloc, ChatState>(
-              listenWhen: (a, b) =>
-                  a.messages.length != b.messages.length || a.thinking != b.thinking,
+              listenWhen: (a, b) => a != b,
               listener: (_, _) => _scrollToBottom(),
               builder: (context, state) {
                 return TerminalPanel(
-                  title: 'agent bot · session',
+                  title: 'opencode · agent session',
                   expand: true,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 6,
+                  ),
                   trailing: Text(
                     state.busy ? 'busy' : 'ready',
                     style: context.retroStyle(
@@ -82,7 +91,9 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
           BlocBuilder<ChatBloc, ChatState>(
-            buildWhen: (a, b) => a.suggestions != b.suggestions || a.messages.length != b.messages.length,
+            buildWhen: (a, b) =>
+                a.suggestions != b.suggestions ||
+                a.messages.length != b.messages.length,
             builder: (context, state) {
               if (state.suggestions.isEmpty) return const SizedBox.shrink();
               return Padding(
@@ -97,7 +108,9 @@ class _ChatScreenState extends State<ChatScreen> {
                         onTap: state.busy
                             ? null
                             : () {
-                                context.read<ChatBloc>().add(ChatPromptSent(suggestion));
+                                context.read<ChatBloc>().add(
+                                  ChatPromptSent(suggestion),
+                                );
                                 _scrollToBottom();
                               },
                       ),
@@ -114,11 +127,11 @@ class _ChatScreenState extends State<ChatScreen> {
               accent: true,
               busy: state.busy,
               actionLabel: 'send',
-              hint: 'спросите бота…',
+              hint: 'спросите агента…',
               onSubmitted: (value) {
                 context.read<ChatBloc>().add(ChatPromptSent(value));
                 _input.clear();
-                _scrollToBottom();
+                _scrollToBottom(force: true);
               },
             ),
           ),
@@ -151,14 +164,24 @@ class _MessageRow extends StatelessWidget {
             width: 14,
             child: Text(
               message.role.prompt,
-              style: context.retroStyle(size: 13, weight: FontWeight.w700, color: color, letterSpacing: 0),
+              style: context.retroStyle(
+                size: 13,
+                weight: FontWeight.w700,
+                color: color,
+                letterSpacing: 0,
+              ),
             ),
           ),
           SizedBox(
             width: 40,
             child: Text(
               message.role.label,
-              style: context.retroStyle(size: 10, color: palette.primaryDim, glow: false, letterSpacing: 0.8),
+              style: context.retroStyle(
+                size: 10,
+                color: palette.primaryDim,
+                glow: false,
+                letterSpacing: 0.8,
+              ),
             ),
           ),
           Expanded(
@@ -205,10 +228,7 @@ class _ThinkingRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         children: [
-          const SizedBox(
-            width: 14,
-            child: BlinkingCursor(glyph: '·'),
-          ),
+          const SizedBox(width: 14, child: BlinkingCursor(glyph: '·')),
           GlowText(
             'agent is thinking',
             size: 11,
@@ -236,7 +256,11 @@ class _SuggestionChip extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
         decoration: BoxDecoration(
-          border: Border.all(color: enabled ? palette.border : palette.border.withValues(alpha: 0.4)),
+          border: Border.all(
+            color: enabled
+                ? palette.border
+                : palette.border.withValues(alpha: 0.4),
+          ),
           color: palette.surfaceAlt,
         ),
         child: Text(

@@ -56,10 +56,8 @@ class HubApi {
   /// [HubApiException] when the password is wrong (401) or the endpoint is
   /// disabled (503).
   Future<String> login(String password) async {
-    final json = await _send(
-      'POST',
-      '/auth/token',
-      body: {'password': password},
+    final json = await _asMap(
+      _request('POST', '/auth/token', body: {'password': password}),
     );
     final key = json['apiKey'];
     if (key is! String || key.isEmpty) {
@@ -90,12 +88,32 @@ class HubApi {
     String path, {
     Map<String, String>? query,
     bool quiet = false,
-  }) => _send('GET', path, query: query, quiet: quiet);
+  }) => _asMap(_request('GET', path, query: query, quiet: quiet));
+
+  Future<List<dynamic>> getList(
+    String path, {
+    Map<String, String>? query,
+    bool quiet = false,
+  }) async {
+    final decoded = await _request('GET', path, query: query, quiet: quiet);
+    return decoded is List ? decoded : const [];
+  }
 
   Future<Map<String, dynamic>> post(String path, {Object? body}) =>
-      _send('POST', path, body: body);
+      _asMap(_request('POST', path, body: body));
 
-  Future<Map<String, dynamic>> _send(
+  Future<Map<String, dynamic>> delete(String path) =>
+      _asMap(_request('DELETE', path));
+
+  Future<Map<String, dynamic>> _asMap(Future<Object?> future) async {
+    final decoded = await future;
+    if (decoded is Map<String, dynamic>) return decoded;
+    return decoded is Map
+        ? decoded.cast<String, dynamic>()
+        : <String, dynamic>{};
+  }
+
+  Future<Object?> _request(
     String method,
     String path, {
     Map<String, String>? query,
@@ -147,10 +165,7 @@ class HubApi {
       }
     }
 
-    if (decoded is Map<String, dynamic>) return decoded;
-    return decoded is Map
-        ? decoded.cast<String, dynamic>()
-        : <String, dynamic>{};
+    return decoded;
   }
 
   Object? _decode(String body) {
@@ -166,6 +181,78 @@ class HubApi {
       decoded is Map && decoded['error'] is String
       ? decoded['error'] as String
       : null;
+
+  /// Subscribes to an SSE endpoint (`GET [path]`) and yields every decoded
+  /// `data:` frame as it arrives.
+  ///
+  /// The chat uses this for opencode's `/chat/event`: one long-lived
+  /// connection replaces per-message polling. The hub answers with
+  /// `text/event-stream` and proxies the headless opencode instance without
+  /// buffering, so frames pass through the moment the agent produces them.
+  /// Comment frames (`: heartbeat`) are skipped.
+  Stream<Map<String, dynamic>> stream(
+    String path, {
+    Duration attachTimeout = const Duration(seconds: 15),
+  }) async* {
+    final connection = _connection();
+    final base = _normalize(connection.apiBaseUrl);
+    final apiKey = connection.apiToken.trim();
+    final uri = _uri(base, path, null);
+
+    final request = http.Request('GET', uri);
+    request.headers['Accept'] = 'text/event-stream';
+    request.headers['Cache-Control'] = 'no-cache';
+    if (apiKey.isNotEmpty) request.headers['X-API-Key'] = apiKey;
+
+    final http.StreamedResponse response;
+    try {
+      response = await _client.send(request).timeout(attachTimeout);
+    } on TimeoutException {
+      talker.warning('GET $uri → таймаут подключения к потоку');
+      throw const HubApiException(null, 'таймаут подключения к потоку');
+    } catch (e) {
+      talker.error('GET $uri → нет связи: $e');
+      throw HubApiException(null, 'нет связи с хабом: $e');
+    }
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final body = await http.Response.fromStream(response);
+      final decoded = _decode(body.body);
+      final message = _errorMessage(decoded) ?? 'HTTP ${response.statusCode}';
+      talker.warning('GET $uri → ${response.statusCode} · $message');
+      throw HubApiException(response.statusCode, message, body: decoded);
+    }
+    talker.info('GET $uri → ${response.statusCode} (SSE)');
+
+    var buffer = '';
+    await for (final chunk in response.stream.transform(utf8.decoder)) {
+      buffer = (buffer + chunk).replaceAll('\r\n', '\n');
+      var index = buffer.indexOf('\n\n');
+      while (index != -1) {
+        final frame = buffer.substring(0, index);
+        buffer = buffer.substring(index + 2);
+        index = buffer.indexOf('\n\n');
+
+        final data = <String>[];
+        for (final line in frame.split('\n')) {
+          if (line.startsWith('data:')) {
+            data.add(line.substring(5).replaceFirst(RegExp(r'^ '), ''));
+          }
+        }
+        if (data.isEmpty) continue; // comment / keep-alive frame
+        try {
+          final decoded = jsonDecode(data.join('\n'));
+          if (decoded is Map<String, dynamic>) {
+            yield decoded;
+          } else if (decoded is Map) {
+            yield decoded.cast<String, dynamic>();
+          }
+        } catch (_) {
+          // Not JSON — keep-alive noise, ignore.
+        }
+      }
+    }
+  }
 
   void close() {
     if (_ownsClient) _client.close();

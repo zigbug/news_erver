@@ -3,9 +3,9 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'core/push/push_service.dart';
 import 'core/theme/retro_theme.dart';
-import 'data/api/api_chat_repository.dart';
 import 'data/api/api_server_repository.dart';
 import 'data/api/hub_api.dart';
+import 'data/api/opencode_chat_repository.dart';
 import 'features/chat/chat_bloc.dart';
 import 'features/chat/chat_event.dart';
 import 'features/control/control_cubit.dart';
@@ -54,11 +54,8 @@ class _ConsoleGraph extends StatelessWidget {
           create: (context) =>
               PushService(context.read<ApiServerRepository>())..start(),
           dispose: (push) => push.dispose(),
-          child: RepositoryProvider<ApiChatRepository>(
-            create: (context) => ApiChatRepository(
-              context.read<HubApi>(),
-              context.read<ApiServerRepository>(),
-            ),
+          child: RepositoryProvider<OpencodeChatRepository>(
+            create: (context) => OpencodeChatRepository(context.read<HubApi>()),
             child: MultiBlocProvider(
               providers: [
                 BlocProvider(
@@ -72,7 +69,7 @@ class _ConsoleGraph extends StatelessWidget {
                 ),
                 BlocProvider(
                   create: (context) =>
-                      ChatBloc(context.read<ApiChatRepository>())
+                      ChatBloc(context.read<OpencodeChatRepository>())
                         ..add(const ChatStarted()),
                 ),
                 BlocProvider(
