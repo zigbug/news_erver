@@ -529,8 +529,8 @@ class ApiServerRepository implements ServerRepository {
           state: c['running'] == true
               ? ServiceState.running
               : ServiceState.stopped,
-          cpuPercent: 0,
-          memoryMb: 0,
+          cpuPercent: (c['cpuPct'] as num?)?.toDouble() ?? 0,
+          memoryMb: (c['memoryMb'] as num?)?.toDouble() ?? 0,
         ),
       );
     }
@@ -544,8 +544,8 @@ class ApiServerRepository implements ServerRepository {
           state: u['active'] == true
               ? ServiceState.running
               : ServiceState.stopped,
-          cpuPercent: 0,
-          memoryMb: 0,
+          cpuPercent: (u['cpuPct'] as num?)?.toDouble() ?? 0,
+          memoryMb: (u['memoryMb'] as num?)?.toDouble() ?? 0,
         ),
       );
     }
