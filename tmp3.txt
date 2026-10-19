@@ -1,0 +1,13 @@
+﻿Analyzing news_erver...                                         
+
+warning - The declaration '_instance' isn't referenced - lib\core\push\push_service.dart:35:26 - unused_element
+   info - 'onTokenRefresh' is deprecated and shouldn't be used. Use onRegistered instead - lib\core\push\push_service.dart:58:17 - deprecated_member_use
+   info - 'getToken' is deprecated and shouldn't be used. Use register() and onRegistered instead - lib\core\push\push_service.dart:63:32 - deprecated_member_use
+
+flutter : 3 issues found. (ran in 2.6s)
+строка:1 знак:1
++ flutter analyze 2>&1 | Out-File -Encoding utf8 tmp3.txt; (Get-Content ...
++ ~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (3 issues found. (ran in 2.6s):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

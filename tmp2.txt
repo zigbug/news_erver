@@ -1,0 +1,16 @@
+﻿Analyzing push_service.dart...                                  
+
+  error - The method 'requestPermission' can't be unconditionally invoked because the receiver can be 'null' - lib\core\push\push_service.dart:56:23 - unchecked_use_of_nullable_value
+   info - 'onTokenRefresh' is deprecated and shouldn't be used. Use onRegistered instead - lib\core\push\push_service.dart:57:17 - deprecated_member_use
+  error - The property 'onTokenRefresh' can't be unconditionally accessed because the receiver can be 'null' - lib\core\push\push_service.dart:57:17 - unchecked_use_of_nullable_value
+  error - The method 'getInitialMessage' can't be unconditionally invoked because the receiver can be 'null' - lib\core\push\push_service.dart:60:39 - unchecked_use_of_nullable_value
+   info - 'getToken' is deprecated and shouldn't be used. Use register() and onRegistered instead - lib\core\push\push_service.dart:62:32 - deprecated_member_use
+  error - The method 'getToken' can't be unconditionally invoked because the receiver can be 'null' - lib\core\push\push_service.dart:62:32 - unchecked_use_of_nullable_value
+
+flutter : 6 issues found. (ran in 1.1s)
+строка:1 знак:1
++ flutter analyze lib/core/push/push_service.dart 2>&1 | Out-File -Enco ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (6 issues found. (ran in 1.1s):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

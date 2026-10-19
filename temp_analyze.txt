@@ -1,0 +1,13 @@
+﻿Analyzing news_erver...                                         
+
+warning - The value of the field '_messagingRef' isn't used - lib\core\push\push_service.dart:35:22 - unused_field
+   info - 'onTokenRefresh' is deprecated and shouldn't be used. Use onRegistered instead - lib\core\push\push_service.dart:59:17 - deprecated_member_use
+   info - 'getToken' is deprecated and shouldn't be used. Use register() and onRegistered instead - lib\core\push\push_service.dart:64:32 - deprecated_member_use
+
+flutter : 3 issues found. (ran in 2.4s)
+строка:1 знак:1
++ flutter analyze 2>&1 | Out-File -Encoding utf8 temp_analyze.txt; gc t ...
++ ~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (3 issues found. (ran in 2.4s):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

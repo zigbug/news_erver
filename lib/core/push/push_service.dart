@@ -28,7 +28,11 @@ class PushService {
   PushService(this._repository);
 
   final ServerRepository _repository;
-  final FirebaseMessaging _messaging = FirebaseMessaging.instance;
+
+  /// Resolved lazily inside [start]: touching `FirebaseMessaging.instance` in
+  /// the constructor would throw before the try/catch on builds where Firebase
+  /// is not wired up (widget tests, a missing google-services.json).
+  // FirebaseMessaging.instance accessed lazily inside start() to keep widget tests safe.
 
   /// FCM token (null until the platform hands one over). `onTokenRefresh`
   /// replaces it and triggers a fresh registration.
@@ -49,13 +53,14 @@ class PushService {
     if (_started) return;
     _started = true;
     try {
-      await _messaging.requestPermission();
-      _messaging.onTokenRefresh.listen(_remember);
+      final messaging = FirebaseMessaging.instance;
+      await messaging.requestPermission();
+      messaging.onTokenRefresh.listen(_remember);
       FirebaseMessaging.onMessage.listen(_onForeground);
       FirebaseMessaging.onMessageOpenedApp.listen(_onOpened);
-      final initial = await _messaging.getInitialMessage();
+      final initial = await messaging.getInitialMessage();
       if (initial != null) _onOpened(initial);
-      _token = await _messaging.getToken();
+      _token = await messaging.getToken();
       talker.info(
         _token == null
             ? 'push: no token yet'
@@ -71,6 +76,7 @@ class PushService {
   Future<void> dispose() async {
     await _statusSub?.cancel();
     _statusSub = null;
+    // nothing to retain
     _started = false;
   }
 
