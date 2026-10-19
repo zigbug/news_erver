@@ -6,6 +6,13 @@ import 'package:news_erver/features/chat/chat_event.dart';
 
 class _FakeChatRepository implements ChatRepository {
   int calls = 0;
+  int clears = 0;
+
+  /// Simulated past transcript, as the hub would return it.
+  List<ChatMessage> past = const [];
+
+  /// When set, the stream fails with this error after the first chunk.
+  Object? failWith;
 
   @override
   String get greeting => 'hello operator';
@@ -14,14 +21,26 @@ class _FakeChatRepository implements ChatRepository {
   List<String> get suggestions => const ['status'];
 
   @override
-  Future<String> reply(String prompt) async {
+  Future<List<ChatMessage>> history() async => past;
+
+  @override
+  Future<void> clear() async {
+    clears++;
+    past = const [];
+  }
+
+  @override
+  Stream<String> reply(String prompt) async* {
     calls++;
-    return 'answer for $prompt';
+    yield 'answer ';
+    if (failWith != null) throw failWith!;
+    yield 'for $prompt';
   }
 }
 
 /// Polls [condition] on the real event loop until it holds or the deadline
-/// passes. The typewriter effect runs on timers, so a plain await is not enough.
+/// passes — the reply arrives through stream events, so a plain await is not
+/// enough.
 Future<void> _waitUntil(
   bool Function() condition, {
   Duration timeout = const Duration(seconds: 5),
@@ -47,6 +66,31 @@ void main() {
     await bloc.close();
   });
 
+  test('replays the stored history after the greeting', () async {
+    final repository = _FakeChatRepository()
+      ..past = [
+        ChatMessage(
+          id: 'h1',
+          role: ChatRole.user,
+          text: 'привет',
+          timestamp: DateTime(2026),
+        ),
+        ChatMessage(
+          id: 'h2',
+          role: ChatRole.bot,
+          text: 'здравствуй',
+          timestamp: DateTime(2026),
+        ),
+      ];
+    final bloc = ChatBloc(repository)..add(const ChatStarted());
+    await pumpEventQueue();
+
+    expect(bloc.state.messages.length, 4);
+    expect(bloc.state.messages[2].text, 'привет');
+    expect(bloc.state.messages[3].text, 'здравствуй');
+    await bloc.close();
+  });
+
   test('answers the prompt and settles on the full bot text', () async {
     final repository = _FakeChatRepository();
     final bloc = ChatBloc(repository)..add(const ChatStarted());
@@ -60,16 +104,54 @@ void main() {
       isTrue,
       reason: 'the prompt must appear in the transcript immediately',
     );
-
-    await _waitUntil(
-      () => !bloc.state.busy && bloc.state.messages.length >= 4,
+    expect(
+      bloc.state.busy,
+      isTrue,
+      reason: 'the chat stays busy while the reply stream is open',
     );
+
+    await _waitUntil(() => !bloc.state.busy && bloc.state.messages.length >= 4);
 
     final last = bloc.state.messages.last;
     expect(repository.calls, 1);
     expect(last.role, ChatRole.bot);
     expect(last.text, 'answer for status');
     expect(last.pending, isFalse);
+    await bloc.close();
+  });
+
+  test('grows the pending bubble while chunks arrive', () async {
+    final bloc = ChatBloc(_FakeChatRepository())..add(const ChatStarted());
+    await pumpEventQueue();
+
+    bloc.add(const ChatPromptSent('status'));
+    await pumpEventQueue();
+
+    await _waitUntil(() => bloc.state.messages.length >= 4);
+    final first = bloc.state.messages.last;
+    expect(first.pending, isTrue);
+    expect(first.text, 'answer ', reason: 'first chunk renders immediately');
+
+    await _waitUntil(() => !bloc.state.busy);
+    expect(bloc.state.messages.last.text, 'answer for status');
+    await bloc.close();
+  });
+
+  test('surfaces a stream failure as a system line', () async {
+    final repository = _FakeChatRepository()..failWith = StateError('boom');
+    final bloc = ChatBloc(repository)..add(const ChatStarted());
+    await pumpEventQueue();
+
+    bloc.add(const ChatPromptSent('status'));
+    await _waitUntil(
+      () =>
+          !bloc.state.busy &&
+          bloc.state.messages.any(
+            (m) => m.role == ChatRole.system && m.text.contains('boom'),
+          ),
+    );
+
+    expect(bloc.state.busy, isFalse);
     await bloc.close();
   });
 

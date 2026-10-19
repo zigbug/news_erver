@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/models/chat_message.dart';
@@ -7,9 +5,9 @@ import '../../data/repositories/chat_repository.dart';
 import 'chat_event.dart';
 import 'chat_state.dart';
 
-/// Terminal chat with the server bot. The repository returns the full answer;
-/// this bloc reveals it with a typewriter effect so replies feel like a real
-/// terminal session.
+/// Terminal chat with the opencode agent. The repository streams the answer
+/// over SSE; this bloc grows the pending bubble as chunks arrive and settles
+/// it when the agent goes idle.
 class ChatBloc extends Bloc<ChatEvent, ChatState> {
   ChatBloc(this._repository) : super(const ChatState()) {
     on<ChatStarted>(_onStarted);
@@ -17,24 +15,38 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     on<ChatCleared>(_onCleared);
   }
 
-  static const Duration _revealInterval = Duration(milliseconds: 16);
-  static const int _charsPerTick = 2;
-
   final ChatRepository _repository;
-  Timer? _typingTimer;
   int _seq = 0;
 
-  void _onStarted(ChatStarted event, Emitter<ChatState> emit) {
+  Future<void> _onStarted(ChatStarted event, Emitter<ChatState> emit) async {
     if (state.messages.isNotEmpty) return;
     emit(
       state.copyWith(
         suggestions: _repository.suggestions,
         messages: [
           _message(ChatRole.bot, _repository.greeting),
-          _message(ChatRole.system, 'session started · protocol v0.9'),
+          _message(ChatRole.system, 'session started · protocol v1.0'),
         ],
       ),
     );
+
+    try {
+      final history = await _repository.history();
+      if (emit.isDone) return;
+      if (history.isNotEmpty) {
+        emit(state.copyWith(messages: [...state.messages, ...history]));
+      }
+    } catch (e) {
+      if (emit.isDone) return;
+      emit(
+        state.copyWith(
+          messages: [
+            ...state.messages,
+            _message(ChatRole.system, 'история недоступна: $e'),
+          ],
+        ),
+      );
+    }
   }
 
   Future<void> _onPromptSent(
@@ -44,62 +56,64 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     final prompt = event.prompt.trim();
     if (prompt.isEmpty || state.busy) return;
 
+    final pending = _message(ChatRole.bot, '', pending: true);
     emit(
       state.copyWith(
-        messages: [...state.messages, _message(ChatRole.user, prompt)],
+        messages: [...state.messages, _message(ChatRole.user, prompt), pending],
         thinking: true,
       ),
     );
 
-    final answer = await _repository.reply(prompt);
-
-    final pending = _message(ChatRole.bot, '', pending: true);
-    emit(
-      state.copyWith(
-        messages: [...state.messages, pending],
-        thinking: false,
-        typing: true,
-      ),
-    );
-
-    await _reveal(answer, pending, emit);
-  }
-
-  Future<void> _reveal(
-    String full,
-    ChatMessage pending,
-    Emitter<ChatState> emit,
-  ) async {
-    _typingTimer?.cancel();
-    final completer = Completer<void>();
-    var revealed = 0;
-
-    void publish({required bool done}) {
-      final index = state.messages.indexWhere((m) => m.id == pending.id);
-      if (index == -1) return;
-      final updated = state.messages[index].copyWith(
-        text: done ? full : full.substring(0, revealed),
-        pending: !done,
+    try {
+      await emit.forEach(
+        _repository.reply(prompt),
+        onData: (String text) {
+          final index = state.messages.indexWhere((m) => m.id == pending.id);
+          if (index == -1) return state;
+          final list = [...state.messages];
+          list[index] = list[index].copyWith(text: text, pending: true);
+          return state.copyWith(messages: list, thinking: false, typing: true);
+        },
       );
-      final list = [...state.messages]..[index] = updated;
-      emit(state.copyWith(messages: list, typing: !done));
-    }
-
-    _typingTimer = Timer.periodic(_revealInterval, (timer) {
-      revealed = (revealed + _charsPerTick).clamp(0, full.length);
-      final done = revealed >= full.length;
-      publish(done: done);
-      if (done) {
-        timer.cancel();
-        if (!completer.isCompleted) completer.complete();
+    } catch (e) {
+      if (!emit.isDone) {
+        emit(
+          state.copyWith(
+            messages: [
+              ...state.messages,
+              _message(ChatRole.system, 'ошибка чата: $e'),
+            ],
+          ),
+        );
       }
-    });
-
-    return completer.future;
+    } finally {
+      if (!emit.isDone) _settle(pending, emit);
+    }
   }
 
-  void _onCleared(ChatCleared event, Emitter<ChatState> emit) {
-    _typingTimer?.cancel();
+  /// Clears the pending cursor and flips both busy flags — called when the
+  /// stream ends, whether the agent finished or the link died.
+  void _settle(ChatMessage pending, Emitter<ChatState> emit) {
+    final index = state.messages.indexWhere((m) => m.id == pending.id);
+    var messages = state.messages;
+    if (index != -1) {
+      messages = [...messages];
+      final message = messages[index];
+      if (message.text.isEmpty) {
+        messages.removeAt(index); // no answer ever arrived — drop the bubble
+      } else {
+        messages[index] = message.copyWith(pending: false);
+      }
+    }
+    emit(state.copyWith(messages: messages, thinking: false, typing: false));
+  }
+
+  Future<void> _onCleared(ChatCleared event, Emitter<ChatState> emit) async {
+    try {
+      await _repository.clear();
+    } catch (_) {
+      // A failed reset on the hub must not block the local wipe.
+    }
     emit(ChatState(suggestions: _repository.suggestions));
   }
 
@@ -111,10 +125,4 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         timestamp: DateTime.now(),
         pending: pending,
       );
-
-  @override
-  Future<void> close() async {
-    _typingTimer?.cancel();
-    return super.close();
-  }
 }
