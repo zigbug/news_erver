@@ -75,6 +75,14 @@ class ApiServerRepository implements ServerRepository {
   int _lastLogTs = 0;
   final Set<String> _seenLogs = {};
 
+  /// `source|message` keys of the lines served on the previous `/logs` tick.
+  /// The hub re-sends the same health-check block every poll with a fresh
+  /// timestamp (so a ts-based set never dedupes it), and the lines come from
+  /// many services in turn. A line is forwarded only when its `source|message`
+  /// was absent from the previous tick's block — i.e. some result changed
+  /// (200 → 400) — while an unchanged rotating block is swallowed.
+  final Set<String> _tickKeys = {};
+
   /// True while the log tail is failing, so the outage is reported once
   /// instead of on every tick (the ticks themselves are quiet).
   bool _logPollDown = false;
@@ -100,6 +108,7 @@ class ApiServerRepository implements ServerRepository {
     _logSources = next;
     _lastLogTs = 0;
     _seenLogs.clear();
+    _tickKeys.clear();
     _logPollDown = false;
   }
 
@@ -388,18 +397,29 @@ class ApiServerRepository implements ServerRepository {
           if (_lastLogTs > 0) 'since_ms': '$_lastLogTs',
         },
       );
-      for (final entry in _parseLogLines(json)) {
-        final key = _logKey(entry);
-        if (_seenLogs.add(key)) {
+      final lines = _parseLogLines(json);
+      final tick = <String>{};
+      for (final entry in lines) {
+        final tickKey = _logSignature(entry);
+        tick.add(tickKey);
+        if (_tickKeys.contains(tickKey)) {
+          // Unchanged since the previous poll — part of the rotating
+          // health-check block the hub re-sends every tick.
+          continue;
+        }
+        if (_seenLogs.add(_logKey(entry))) {
           _logController.add(entry);
           if (entry.timestamp.millisecondsSinceEpoch > _lastLogTs) {
             _lastLogTs = entry.timestamp.millisecondsSinceEpoch;
           }
         }
       }
+      _tickKeys
+        ..clear()
+        ..addAll(tick);
       if (_seenLogs.length > 2000) {
-        // since_ms keeps the server from resending old lines, so dropping the
-        // dedupe set is safe.
+        // The tick-set, not this ts-set, carries the dedupe across polls;
+        // dropping it only loses exact-duplicate protection within a poll.
         _seenLogs.clear();
       }
       _logPollDown = false;
@@ -423,6 +443,26 @@ class ApiServerRepository implements ServerRepository {
 
   String _logKey(LogEntry entry) =>
       '${entry.timestamp.millisecondsSinceEpoch}|${entry.source}|${entry.message}';
+
+  /// Volatile bits the hub bakes into every log line: an ISO timestamp and a
+  /// `h:mm:ss.ffffff` request duration. They differ on every poll even when the
+  /// result is identical, so they are blanked before comparison.
+  static final RegExp _volatileIso = RegExp(
+    r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?',
+  );
+  static final RegExp _volatileDuration = RegExp(r'\d+:\d{2}:\d{2}(?:\.\d+)?');
+  static final RegExp _volatileMillis = RegExp(r'\d+(?:\.\d+)?\s?(?:ms|µs|us)\b');
+
+  /// Signature used to detect that a source's result actually changed between
+  /// polls: the message with volatile timestamps/durations stripped, so
+  /// `... [200] /health` stays stable while `[200]` → `[400]` does not.
+  String _logSignature(LogEntry entry) {
+    final normalized = entry.message
+        .replaceAll(_volatileIso, 'TS')
+        .replaceAll(_volatileDuration, 'DUR')
+        .replaceAll(_volatileMillis, 'DUR');
+    return '${entry.source}|${entry.level.name}|$normalized';
+  }
 
   List<LogEntry> _parseLogLines(Map<String, dynamic> json) {
     final raw = json['lines'];

@@ -30,9 +30,11 @@ class TerminalBloc extends Bloc<TerminalEvent, TerminalState> {
     TerminalStarted event,
     Emitter<TerminalState> emit,
   ) async {
-    _subscription ??= _repository.logs().listen(
-      (entry) => add(TerminalLineReceived(entry)),
-    );
+    // Dedup lives in the repository (tick-set comparison), so every entry
+    // reaching here is genuinely new/changed.
+    _subscription ??= _repository.logs().listen((entry) {
+      add(TerminalLineReceived(entry));
+    });
     final available = await _repository.availableLogSources();
     final selected = available.toSet();
     _repository.setLogSources(available);
