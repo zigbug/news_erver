@@ -36,7 +36,14 @@ class RetroPromptField extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Text('>', style: context.retroStyle(size: 15, weight: FontWeight.w700, color: color)),
+          Text(
+            '>',
+            style: context.retroStyle(
+              size: 15,
+              weight: FontWeight.w700,
+              color: color,
+            ),
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: TextField(
@@ -48,7 +55,11 @@ class RetroPromptField extends StatelessWidget {
                 if (value.trim().isEmpty) return;
                 onSubmitted(value);
               },
-              style: context.retroStyle(size: 14, color: palette.primary, letterSpacing: 0.4),
+              style: context.retroStyle(
+                size: 14,
+                color: palette.primary,
+                letterSpacing: 0.4,
+              ),
               cursorColor: color,
               cursorWidth: 8,
               decoration: InputDecoration(
@@ -58,24 +69,11 @@ class RetroPromptField extends StatelessWidget {
                 enabledBorder: InputBorder.none,
                 focusedBorder: InputBorder.none,
                 hintText: hint,
-                hintStyle: context.retroStyle(size: 13, color: palette.primaryDim, glow: false),
-                suffixIcon: busy
-                    ? SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: Center(
-                          child: SizedBox(
-                            width: 12,
-                            height: 12,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: color,
-                            ),
-                          ),
-                        ),
-                      )
-                    : null,
-                suffixIconConstraints: const BoxConstraints(minWidth: 20, minHeight: 20),
+                hintStyle: context.retroStyle(
+                  size: 13,
+                  color: palette.primaryDim,
+                  glow: false,
+                ),
               ),
             ),
           ),
@@ -91,12 +89,18 @@ class RetroPromptField extends StatelessWidget {
             style: TextButton.styleFrom(
               foregroundColor: color,
               disabledForegroundColor: palette.primaryDim,
-              shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.zero,
+              ),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             ),
             child: Text(
               actionLabel.toUpperCase(),
-              style: context.retroStyle(size: 12, weight: FontWeight.w700, color: color),
+              style: context.retroStyle(
+                size: 12,
+                weight: FontWeight.w700,
+                color: color,
+              ),
             ),
           ),
         ],

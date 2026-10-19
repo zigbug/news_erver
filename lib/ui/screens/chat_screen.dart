@@ -9,6 +9,7 @@ import '../../features/chat/chat_state.dart';
 import '../widgets/blinking_cursor.dart';
 import '../widgets/glow_text.dart';
 import '../widgets/retro_prompt_field.dart';
+import '../widgets/retro_spinner.dart';
 import '../widgets/terminal_panel.dart';
 
 /// Terminal-style chat with the server bot.
@@ -208,7 +209,7 @@ class _MessageRow extends StatelessWidget {
                       ),
                       if (message.pending) ...[
                         const SizedBox(width: 2),
-                        const BlinkingCursor(glyph: '▌'),
+                        const RetroSpinner(),
                       ],
                     ],
                   ),

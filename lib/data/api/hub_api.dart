@@ -8,7 +8,7 @@ import '../../core/models/app_settings.dart';
 
 /// Raised when the hub is unreachable or answers with a non-2xx status.
 class HubApiException implements Exception {
-  const HubApiException(this.statusCode, this.message, {this.body});
+  const HubApiException(this.statusCode, this.message, {this.body, this.isTimeout = false});
 
   /// HTTP status, or null when the request never completed (offline/timeout).
   final int? statusCode;
@@ -18,9 +18,12 @@ class HubApiException implements Exception {
   /// Decoded error body, when the hub returned JSON.
   final Object? body;
 
+  /// True when the request ran out of time (the hub may still have it).
+  final bool isTimeout;
+
   bool get isUnauthorized => statusCode == 401;
 
-  bool get isOffline => statusCode == null;
+  bool get isOffline => statusCode == null && !isTimeout;
 
   @override
   String toString() =>
@@ -99,8 +102,11 @@ class HubApi {
     return decoded is List ? decoded : const [];
   }
 
-  Future<Map<String, dynamic>> post(String path, {Object? body}) =>
-      _asMap(_request('POST', path, body: body));
+  Future<Map<String, dynamic>> post(
+    String path, {
+    Object? body,
+    Duration? timeout,
+  }) => _asMap(_request('POST', path, body: body, timeout: timeout));
 
   Future<Map<String, dynamic>> delete(String path) =>
       _asMap(_request('DELETE', path));
@@ -119,11 +125,13 @@ class HubApi {
     Map<String, String>? query,
     Object? body,
     bool quiet = false,
+    Duration? timeout,
   }) async {
     final connection = _connection();
     final base = _normalize(connection.apiBaseUrl);
     final apiKey = connection.apiToken.trim();
     final uri = _uri(base, path, query);
+    final effectiveTimeout = timeout ?? this.timeout;
 
     final request = http.Request(method, uri);
     request.headers['Accept'] = 'application/json';
@@ -136,13 +144,19 @@ class HubApi {
     final stopwatch = Stopwatch()..start();
     http.Response response;
     try {
-      final streamed = await _client.send(request).timeout(timeout);
+      final streamed = await _client.send(request).timeout(effectiveTimeout);
       response = await http.Response.fromStream(streamed);
     } on TimeoutException {
       if (!quiet) {
-        talker.warning('$method $uri → таймаут (${timeout.inSeconds}s)');
+        talker.warning(
+          '$method $uri → таймаут (${effectiveTimeout.inSeconds}s)',
+        );
       }
-      throw const HubApiException(null, 'таймаут ответа хаба');
+      throw const HubApiException(
+        null,
+        'таймаут ответа хаба',
+        isTimeout: true,
+      );
     } catch (e) {
       if (!quiet) talker.error('$method $uri → нет связи: $e');
       throw HubApiException(null, 'нет связи с хабом: $e');
@@ -193,6 +207,7 @@ class HubApi {
   Stream<Map<String, dynamic>> stream(
     String path, {
     Duration attachTimeout = const Duration(seconds: 15),
+    void Function()? onOpen,
   }) async* {
     final connection = _connection();
     final base = _normalize(connection.apiBaseUrl);
@@ -223,34 +238,47 @@ class HubApi {
       throw HubApiException(response.statusCode, message, body: decoded);
     }
     talker.info('GET $uri → ${response.statusCode} (SSE)');
+    onOpen?.call();
 
     var buffer = '';
-    await for (final chunk in response.stream.transform(utf8.decoder)) {
-      buffer = (buffer + chunk).replaceAll('\r\n', '\n');
-      var index = buffer.indexOf('\n\n');
-      while (index != -1) {
-        final frame = buffer.substring(0, index);
-        buffer = buffer.substring(index + 2);
-        index = buffer.indexOf('\n\n');
+    var frameCount = 0;
+    try {
+      await for (final chunk in response.stream.transform(utf8.decoder)) {
+        buffer = (buffer + chunk).replaceAll('\r\n', '\n');
+        var index = buffer.indexOf('\n\n');
+        while (index != -1) {
+          final frame = buffer.substring(0, index);
+          buffer = buffer.substring(index + 2);
+          index = buffer.indexOf('\n\n');
 
-        final data = <String>[];
-        for (final line in frame.split('\n')) {
-          if (line.startsWith('data:')) {
-            data.add(line.substring(5).replaceFirst(RegExp(r'^ '), ''));
+          final data = <String>[];
+          for (final line in frame.split('\n')) {
+            if (line.startsWith('data:')) {
+              data.add(line.substring(5).replaceFirst(RegExp(r'^ '), ''));
+            }
           }
-        }
-        if (data.isEmpty) continue; // comment / keep-alive frame
-        try {
-          final decoded = jsonDecode(data.join('\n'));
-          if (decoded is Map<String, dynamic>) {
-            yield decoded;
-          } else if (decoded is Map) {
-            yield decoded.cast<String, dynamic>();
+          if (data.isEmpty) continue; // comment / keep-alive frame
+          frameCount++;
+          try {
+            final decoded = jsonDecode(data.join('\n'));
+            if (decoded is Map<String, dynamic>) {
+              if (frameCount <= 100) talker.debug('SSE #$frameCount: $decoded');
+              yield decoded;
+            } else if (decoded is Map) {
+              if (frameCount <= 100) {
+                talker.debug('SSE #$frameCount: $decoded');
+              }
+              yield decoded.cast<String, dynamic>();
+            }
+          } catch (_) {
+            // Not JSON — keep-alive noise, ignore.
           }
-        } catch (_) {
-          // Not JSON — keep-alive noise, ignore.
         }
       }
+      talker.info('GET $uri → SSE stream closed after $frameCount frames');
+    } catch (e) {
+      talker.error('GET $uri → SSE stream error after $frameCount frames: $e');
+      rethrow;
     }
   }
 

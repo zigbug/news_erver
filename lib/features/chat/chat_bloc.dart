@@ -1,5 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../core/logging/app_logger.dart';
 import '../../core/models/chat_message.dart';
 import '../../data/repositories/chat_repository.dart';
 import 'chat_event.dart';
@@ -37,6 +38,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         emit(state.copyWith(messages: [...state.messages, ...history]));
       }
     } catch (e) {
+      talker.error('chat: history load failed: $e');
       if (emit.isDone) return;
       emit(
         state.copyWith(
@@ -76,13 +78,15 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         },
       );
     } catch (e) {
+      talker.error('chat: reply stream failed: $e');
       if (!emit.isDone) {
+        // Drop the pending bubble here — _settle would otherwise replace
+        // it with a second "no answer" note on top of this error message.
+        final list = state.messages.toList();
+        list.removeWhere((m) => m.id == pending.id);
         emit(
           state.copyWith(
-            messages: [
-              ...state.messages,
-              _message(ChatRole.system, 'ошибка чата: $e'),
-            ],
+            messages: [...list, _message(ChatRole.system, 'ошибка чата: $e')],
           ),
         );
       }
@@ -100,7 +104,12 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       messages = [...messages];
       final message = messages[index];
       if (message.text.isEmpty) {
-        messages.removeAt(index); // no answer ever arrived — drop the bubble
+        // No answer ever arrived — replace the bubble with a visible note
+        // instead of dropping it silently.
+        messages[index] = _message(
+          ChatRole.system,
+          'агент завершил ход без ответа — см. логи (кнопка ▤)',
+        );
       } else {
         messages[index] = message.copyWith(pending: false);
       }
