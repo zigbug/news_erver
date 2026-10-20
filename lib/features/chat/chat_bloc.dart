@@ -13,11 +13,17 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
   ChatBloc(this._repository) : super(const ChatState()) {
     on<ChatStarted>(_onStarted);
     on<ChatPromptSent>(_onPromptSent);
+    on<ChatStopped>(_onStopped);
     on<ChatCleared>(_onCleared);
   }
 
   final ChatRepository _repository;
   int _seq = 0;
+
+  /// Set while a reply is streaming so [ChatStopped] knows there is a run to
+  /// abort and which bubble to settle once the stream closes.
+  ChatMessage? _pending;
+  var _stopping = false;
 
   Future<void> _onStarted(ChatStarted event, Emitter<ChatState> emit) async {
     if (state.messages.isNotEmpty) return;
@@ -59,6 +65,8 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     if (prompt.isEmpty || state.busy) return;
 
     final pending = _message(ChatRole.bot, '', pending: true);
+    _pending = pending;
+    _stopping = false;
     emit(
       state.copyWith(
         messages: [...state.messages, _message(ChatRole.user, prompt), pending],
@@ -91,7 +99,36 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         );
       }
     } finally {
+      _pending = null;
       if (!emit.isDone) _settle(pending, emit);
+    }
+  }
+
+  /// Aborts the run in progress. The server answers the abort with an idle
+  /// status, which closes the reply stream and settles the bubble; this only
+  /// fires the request and flips the UI out of its busy state promptly, so a
+  /// slow abort cannot leave the operator locked out.
+  Future<void> _onStopped(ChatStopped event, Emitter<ChatState> emit) async {
+    if (_stopping) return;
+    _stopping = true;
+    final pending = _pending;
+    if (pending != null && !emit.isDone) {
+      final index = state.messages.indexWhere((m) => m.id == pending.id);
+      if (index != -1) {
+        final list = [...state.messages];
+        final message = list[index];
+        list[index] = message.text.isEmpty
+            ? message
+            : message.copyWith(pending: false);
+        emit(state.copyWith(messages: list, thinking: false, typing: false));
+      }
+    } else if (!emit.isDone) {
+      emit(state.copyWith(thinking: false, typing: false));
+    }
+    try {
+      await _repository.stop();
+    } catch (e) {
+      talker.warning('chat: stop failed: $e');
     }
   }
 
@@ -108,12 +145,15 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         // instead of dropping it silently.
         messages[index] = _message(
           ChatRole.system,
-          'агент завершил ход без ответа — см. логи (кнопка ▤)',
+          _stopping
+              ? 'ход прерван оператором'
+              : 'агент завершил ход без ответа — см. логи (кнопка ▤)',
         );
       } else {
         messages[index] = message.copyWith(pending: false);
       }
     }
+    _stopping = false;
     emit(state.copyWith(messages: messages, thinking: false, typing: false));
   }
 

@@ -15,6 +15,10 @@ abstract interface class ChatRepository {
   /// the agent finishes, and errors when the link dies mid-generation.
   Stream<String> reply(String prompt);
 
+  /// Asks the agent to stop the run in progress. Safe to call when nothing
+  /// is running — a no-op that still resolves.
+  Future<void> stop();
+
   /// Drops the current session so the next conversation starts fresh.
   Future<void> clear();
 

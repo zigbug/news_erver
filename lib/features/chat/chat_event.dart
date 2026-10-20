@@ -20,6 +20,11 @@ class ChatPromptSent extends ChatEvent {
   List<Object?> get props => [prompt];
 }
 
+/// Operator pressed "stop" — abort the run currently in progress.
+class ChatStopped extends ChatEvent {
+  const ChatStopped();
+}
+
 class ChatCleared extends ChatEvent {
   const ChatCleared();
 }

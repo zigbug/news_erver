@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:news_erver/core/models/chat_message.dart';
 import 'package:news_erver/data/repositories/chat_repository.dart';
@@ -7,12 +9,20 @@ import 'package:news_erver/features/chat/chat_event.dart';
 class _FakeChatRepository implements ChatRepository {
   int calls = 0;
   int clears = 0;
+  int stops = 0;
 
   /// Simulated past transcript, as the hub would return it.
   List<ChatMessage> past = const [];
 
   /// When set, the stream fails with this error after the first chunk.
   Object? failWith;
+
+  /// When set, [reply] stays open until this completes — lets a test stop
+  /// mid-generation and assert the UI unblocks.
+  Completer<void>? hold;
+
+  /// When true, [reply] yields exactly one chunk then waits forever.
+  bool hangAfterFirstChunk = false;
 
   @override
   String get greeting => 'hello operator';
@@ -30,9 +40,18 @@ class _FakeChatRepository implements ChatRepository {
   }
 
   @override
+  Future<void> stop() async {
+    stops++;
+  }
+
+  @override
   Stream<String> reply(String prompt) async* {
     calls++;
     yield 'answer ';
+    if (hangAfterFirstChunk) {
+      await (hold ??= Completer<void>()).future;
+      return;
+    }
     if (failWith != null) throw failWith!;
     yield 'for $prompt';
   }
@@ -165,6 +184,39 @@ void main() {
 
     expect(repository.calls, 0);
     expect(bloc.state.messages.length, 2);
+    await bloc.close();
+  });
+
+  test('ChatStopped aborts the run and unblocks the input', () async {
+    final repository = _FakeChatRepository()..hangAfterFirstChunk = true;
+    final bloc = ChatBloc(repository)..add(const ChatStarted());
+    await pumpEventQueue();
+
+    bloc.add(const ChatPromptSent('status'));
+    await _waitUntil(() => bloc.state.busy);
+
+    bloc.add(const ChatStopped());
+    await _waitUntil(() => !bloc.state.busy);
+
+    expect(repository.stops, 1, reason: 'the hub must be asked to abort');
+    expect(bloc.state.busy, isFalse);
+
+    // Let the held stream finish so the bloc can settle cleanly.
+    repository.hold?.complete();
+    await pumpEventQueue();
+    await bloc.close();
+  });
+
+  test('ChatStopped with no run is a harmless no-op', () async {
+    final repository = _FakeChatRepository();
+    final bloc = ChatBloc(repository)..add(const ChatStarted());
+    await pumpEventQueue();
+
+    bloc.add(const ChatStopped());
+    await pumpEventQueue();
+
+    expect(repository.stops, 1);
+    expect(bloc.state.busy, isFalse);
     await bloc.close();
   });
 }
