@@ -41,6 +41,26 @@ class OpencodeChatRepository implements ChatRepository {
   ];
 
   @override
+  Future<void> stop() async {
+    final sid = _sessionId;
+    if (sid == null) {
+      talker.info('chat: stop requested with no session — nothing to abort');
+      return;
+    }
+    talker.info('chat: aborting run in session $sid');
+    try {
+      await _api.post('/chat/session/$sid/abort');
+      talker.info('chat: abort acknowledged by opencode');
+    } on HubApiException catch (e) {
+      // A run may already be gone — the abort is best-effort, the local
+      // stream is what actually unblocks the operator.
+      talker.warning('chat: abort session $sid failed: $e');
+    } catch (e) {
+      talker.warning('chat: abort session $sid failed: $e');
+    }
+  }
+
+  @override
   Future<void> clear() async {
     final sid = _sessionId;
     _sessionId = null;
@@ -155,17 +175,20 @@ class OpencodeChatRepository implements ChatRepository {
 
     final stopwatch = Stopwatch()..start();
     final subscription = _api
-        .stream('/chat/event', onOpen: () {
-          // The SSE link is up — hub answered 200. Events may still take a
-          // moment, but the channel itself is alive, so the prompt can go.
-          if (!attached.isCompleted) {
-            talker.info(
-              'chat: SSE link established after '
-              '${stopwatch.elapsedMilliseconds}ms',
-            );
-            attached.complete();
-          }
-        })
+        .stream(
+          '/chat/event',
+          onOpen: () {
+            // The SSE link is up — hub answered 200. Events may still take a
+            // moment, but the channel itself is alive, so the prompt can go.
+            if (!attached.isCompleted) {
+              talker.info(
+                'chat: SSE link established after '
+                '${stopwatch.elapsedMilliseconds}ms',
+              );
+              attached.complete();
+            }
+          },
+        )
         .listen(
           (event) {
             if (!attached.isCompleted) {
@@ -206,9 +229,7 @@ class OpencodeChatRepository implements ChatRepository {
                   final text = (part['text'] as String?) ?? '';
                   if (!textOrder.contains(id)) textOrder.add(id);
                   fullTexts[id] = text;
-                  talker.debug(
-                    'chat: part.updated id=$id len=${text.length}',
-                  );
+                  talker.debug('chat: part.updated id=$id len=${text.length}');
                   emit();
                 }
               case 'message.part.delta':

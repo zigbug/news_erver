@@ -129,6 +129,7 @@ class _ChatScreenState extends State<ChatScreen> {
               busy: state.busy,
               actionLabel: 'send',
               hint: 'спросите агента…',
+              onStop: () => context.read<ChatBloc>().add(const ChatStopped()),
               onSubmitted: (value) {
                 context.read<ChatBloc>().add(ChatPromptSent(value));
                 _input.clear();

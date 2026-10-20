@@ -1,4 +1,5 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
+
 import '../../core/theme/retro_theme.dart';
 
 /// > prompt field used by the terminal and the chat screen.
@@ -12,6 +13,8 @@ class RetroPromptField extends StatelessWidget {
     this.busy = false,
     this.actionLabel = 'RUN',
     this.accent = false,
+    this.onStop,
+    this.stopLabel = 'stop',
   });
 
   final TextEditingController controller;
@@ -21,6 +24,10 @@ class RetroPromptField extends StatelessWidget {
   final bool busy;
   final String actionLabel;
   final bool accent;
+
+  /// When set, the action button turns into a stop control while [busy].
+  final VoidCallback? onStop;
+  final String stopLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -79,7 +86,9 @@ class RetroPromptField extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           TextButton(
-            onPressed: enabled && !busy
+            onPressed: busy
+                ? onStop
+                : enabled
                 ? () {
                     final value = controller.text;
                     if (value.trim().isEmpty) return;
@@ -87,7 +96,7 @@ class RetroPromptField extends StatelessWidget {
                   }
                 : null,
             style: TextButton.styleFrom(
-              foregroundColor: color,
+              foregroundColor: busy && onStop != null ? palette.warning : color,
               disabledForegroundColor: palette.primaryDim,
               shape: const RoundedRectangleBorder(
                 borderRadius: BorderRadius.zero,
@@ -95,11 +104,11 @@ class RetroPromptField extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             ),
             child: Text(
-              actionLabel.toUpperCase(),
+              (busy && onStop != null ? stopLabel : actionLabel).toUpperCase(),
               style: context.retroStyle(
                 size: 12,
                 weight: FontWeight.w700,
-                color: color,
+                color: busy && onStop != null ? palette.warning : color,
               ),
             ),
           ),
