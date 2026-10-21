@@ -5,11 +5,58 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:talker_bloc_logger/talker_bloc_logger.dart';
 
 import 'app.dart';
 import 'core/logging/app_logger.dart';
 import 'core/push/push_service.dart';
+
+Future<void> _createNotificationChannels() async {
+  final plugin = FlutterLocalNotificationsPlugin();
+  const android = AndroidFlutterLocalNotificationsPlugin();
+
+  const critical = AndroidNotificationChannel(
+    'hub_critical',
+    'Критичные события',
+    description: 'Падение сервиса, сбои',
+    importance: Importance.high,
+    playSound: true,
+    enableVibration: true,
+  );
+  const alerts = AndroidNotificationChannel(
+    'hub_alerts',
+    'Оповещения',
+    description: 'Сообщения от ассистента и статуса',
+    importance: Importance.high,
+    playSound: true,
+    enableVibration: true,
+  );
+  const silent = AndroidNotificationChannel(
+    'hub_silent',
+    'Фоновые события',
+    description: 'Технические события',
+    importance: Importance.low,
+    playSound: false,
+    enableVibration: false,
+  );
+
+  await plugin
+      .resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin
+      >()
+      ?.createNotificationChannel(critical);
+  await plugin
+      .resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin
+      >()
+      ?.createNotificationChannel(alerts);
+  await plugin
+      .resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin
+      >()
+      ?.createNotificationChannel(silent);
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,6 +68,7 @@ Future<void> main() async {
   try {
     await Firebase.initializeApp();
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    await _createNotificationChannels();
     talker.info('firebase ready');
   } catch (e, st) {
     talker.handle(e, st, 'firebase init failed (push disabled)');
