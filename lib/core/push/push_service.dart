@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../../data/repositories/server_repository.dart';
 import '../logging/app_logger.dart';
@@ -55,48 +54,11 @@ class PushService {
     _started = true;
     try {
       final messaging = FirebaseMessaging.instance;
-      await messaging.requestPermission();
-      // Убедимся, что каналы созданы и на этом запуске
-      final plugin = FlutterLocalNotificationsPlugin();
-      const android = AndroidNotificationChannel(
-        'hub_critical',
-        'Критичные события',
-        description: 'Падение сервиса, сбои',
-        importance: Importance.high,
-        playSound: true,
-        enableVibration: true,
+      final settings = await messaging.requestPermission();
+      talker.info(
+        'push: permission ${settings.authorizationStatus.name} '
+        '(alert=${settings.alert}, badge=${settings.badge}, sound=${settings.sound})',
       );
-      const alerts = AndroidNotificationChannel(
-        'hub_alerts',
-        'Оповещения',
-        description: 'Сообщения от ассистента и статуса',
-        importance: Importance.high,
-        playSound: true,
-        enableVibration: true,
-      );
-      const silent = AndroidNotificationChannel(
-        'hub_silent',
-        'Фоновые события',
-        description: 'Технические события',
-        importance: Importance.low,
-        playSound: false,
-        enableVibration: false,
-      );
-      await plugin
-          .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin
-          >()
-          ?.createNotificationChannel(android);
-      await plugin
-          .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin
-          >()
-          ?.createNotificationChannel(alerts);
-      await plugin
-          .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin
-          >()
-          ?.createNotificationChannel(silent);
       messaging.onTokenRefresh.listen(_remember);
       FirebaseMessaging.onMessage.listen(_onForeground);
       FirebaseMessaging.onMessageOpenedApp.listen(_onOpened);
@@ -150,8 +112,11 @@ class PushService {
     final notification = message.notification;
     final title = notification?.title ?? message.data['title']?.toString();
     final body = notification?.body ?? message.data['body']?.toString();
+    final channel = notification?.android?.channelId;
+    final hasNotification = notification != null;
     talker.info(
-      'push ← ${title ?? "(no title)"}${body == null ? "" : " · $body"}',
+      'push ← ${title ?? "(no title)"}${body == null ? "" : " · $body"} '
+      '· channel=${channel ?? "(none)"} notification=$hasNotification',
     );
   }
 

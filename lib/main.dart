@@ -14,7 +14,6 @@ import 'core/push/push_service.dart';
 
 Future<void> _createNotificationChannels() async {
   final plugin = FlutterLocalNotificationsPlugin();
-  const android = AndroidFlutterLocalNotificationsPlugin();
 
   const critical = AndroidNotificationChannel(
     'hub_critical',

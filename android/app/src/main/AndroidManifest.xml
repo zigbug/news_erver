@@ -1,4 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Android 13+ (API 33) requires a runtime permission before any
+         notification can be posted; FCM's requestPermission() triggers the
+         system dialog, but the manifest must declare it first. INTERNET is
+         needed by HubApi in every build type (main, not just debug/profile). -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
     <application
         android:label="Мой Сервер"
         android:name="${applicationName}"
@@ -40,6 +47,14 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_color"
             android:resource="@color/ic_notification_color" />
+
+        <!-- Fallback channel for notifications whose payload omits
+             android.notification.channel_id (e.g. plain FCM console sends).
+             hub_alerts is created in main.dart with high importance + sound,
+             so a default push actually rings instead of landing silently. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="hub_alerts" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
