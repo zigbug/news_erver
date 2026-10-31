@@ -101,8 +101,8 @@ class OpencodeChatRepository implements ChatRepository {
       for (final item in raw) {
         if (item is! Map) continue;
         final info = item['info'];
-        if (info is! Map) continue;
-        final parts = item['parts'];
+        final infoMap = info is Map ? info : null;
+        final parts = item['parts'] ?? item['content'];
         final text = <String>[];
         if (parts is List) {
           for (final part in parts) {
@@ -113,11 +113,13 @@ class OpencodeChatRepository implements ChatRepository {
           }
         }
         if (text.isEmpty) continue;
-        final role = info['role'] == 'user' ? ChatRole.user : ChatRole.bot;
-        final created = (info['time'] as Map?)?['created'];
+        final roleStr = infoMap?['role'] ?? item['role'] ?? item['type'];
+        final role = roleStr == 'user' ? ChatRole.user : ChatRole.bot;
+        final timeMap = (infoMap?['time'] as Map?) ?? (item['time'] as Map?);
+        final created = timeMap?['created'];
         out.add(
           ChatMessage(
-            id: (info['id'] as String?) ?? 'history-${out.length}',
+            id: (infoMap?['id'] as String?) ?? (item['id'] as String?) ?? 'history-${out.length}',
             role: role,
             text: text.join('\n'),
             timestamp: created is num
