@@ -316,31 +316,26 @@ class OpencodeChatRepository implements ChatRepository {
       }
       talker.info('chat: sending prompt to session $sid: "$prompt"');
       try {
-        // OpenCode v2 uses POST /session/{id}/prompt. Hub proxies /chat/* and
-        // rewrites paths; send to /chat/session/$sid/prompt for compatibility.
+        // OpenCode v2.2.1: POST /api/session/{id}/prompt expects {"text": "..."}
         await _api.post(
           '/chat/session/$sid/prompt',
           body: {
-            'parts': [
-              {'type': 'text', 'text': prompt},
-            ],
+            'text': prompt,
           },
           timeout: const Duration(seconds: 10),
         );
         talker.info('chat: prompt accepted by hub (fast reply)');
       } on HubApiException catch (e) {
         if (e.isTimeout) {
-          // The hub may hold the prompt open until the agent finishes —
-          // the prompt is already queued; keep listening over SSE.
           talker.warning(
             'chat: prompt held open >10s — assuming accepted, '
             'waiting for SSE busy',
           );
         } else {
-          // Fallback to old endpoint if hub hasn't been updated in some env
+          // Fallback to old format just in case
           try {
             await _api.post(
-              '/chat/session/$sid/prompt_async',
+              '/chat/session/$sid/prompt',
               body: {
                 'parts': [
                   {'type': 'text', 'text': prompt},
@@ -348,15 +343,35 @@ class OpencodeChatRepository implements ChatRepository {
               },
               timeout: const Duration(seconds: 10),
             );
-            talker.info('chat: prompt_async accepted by hub (fallback)');
+            talker.info('chat: prompt accepted by hub (fallback parts)');
           } catch (e2) {
             if (e2 is HubApiException && e2.isTimeout) {
               talker.warning(
-                'chat: prompt_async held open >10s — assuming accepted, '
+                'chat: prompt held open >10s — assuming accepted, '
                 'waiting for SSE busy',
               );
             } else {
-              rethrow;
+              try {
+                await _api.post(
+                  '/chat/session/$sid/prompt_async',
+                  body: {
+                    'parts': [
+                      {'type': 'text', 'text': prompt},
+                    ],
+                  },
+                  timeout: const Duration(seconds: 10),
+                );
+                talker.info('chat: prompt_async accepted by hub (fallback)');
+              } catch (e3) {
+                if (e3 is HubApiException && e3.isTimeout) {
+                  talker.warning(
+                    'chat: prompt_async held open >10s — assuming accepted, '
+                    'waiting for SSE busy',
+                  );
+                } else {
+                  rethrow;
+                }
+              }
             }
           }
         }
