@@ -32,7 +32,6 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         suggestions: _repository.suggestions,
         messages: [
           _message(ChatRole.bot, _repository.greeting),
-          _message(ChatRole.system, 'session started · protocol v1.0'),
         ],
       ),
     );
@@ -43,17 +42,25 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       if (history.isNotEmpty) {
         emit(state.copyWith(messages: [...state.messages, ...history]));
       }
+      // Empty history on a fresh session is normal — don't treat as error.
     } catch (e) {
       talker.error('chat: history load failed: $e');
       if (emit.isDone) return;
-      emit(
-        state.copyWith(
-          messages: [
-            ...state.messages,
-            _message(ChatRole.system, 'история недоступна: $e'),
-          ],
-        ),
-      );
+      // Don't block the chat on history load failures (race conditions happen
+      // on fresh sessions with opencode v2). Allow SSE + new messages.
+      // Only surface a soft note if it's clearly not recoverable.
+      final msg = e.toString();
+      if (msg.contains('opencode не создал сессию')) {
+        emit(
+          state.copyWith(
+            messages: [
+              ...state.messages,
+              _message(ChatRole.system, 'история недоступна: $e'),
+            ],
+          ),
+        );
+      }
+      // Otherwise silently continue — chat remains usable.
     }
   }
 

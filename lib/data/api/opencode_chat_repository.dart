@@ -10,7 +10,7 @@ import 'hub_api.dart';
 /// One session (reused by title) keeps the transcript alive across app
 /// launches. A reply is produced over SSE: the repository opens
 /// `GET /chat/event` first, waits until the link is attached, fires
-/// `POST .../prompt_async`, then forwards the assistant text as opencode
+/// `POST /chat/session/{id}/prompt` (OpenCode v2), then forwards the assistant text as opencode
 /// accumulates it and closes once the session reports idle.
 class OpencodeChatRepository implements ChatRepository {
   OpencodeChatRepository(this._api);
@@ -77,11 +77,26 @@ class OpencodeChatRepository implements ChatRepository {
   @override
   Future<List<ChatMessage>> history() async {
     try {
-      final sid = await ensureSession();
-      final raw = await _api.getList(
-        '/chat/session/$sid/message',
-        query: {'limit': '50'},
-      );
+      final sid = await ensureSessionWithRetry();
+      // Try to fetch history with small retries in case session is not fully ready
+      // in opencode v2 (race condition).
+      List<dynamic> raw = const [];
+      for (var attempt = 0; attempt < 4; attempt++) {
+        try {
+          raw = await _api.getList(
+            '/chat/session/$sid/message',
+            query: {'limit': '50'},
+          );
+          break;
+        } catch (e) {
+          final msg = e.toString();
+          if (attempt < 3 && (msg.contains('404') || msg.contains('not found') || msg.contains('создал'))) {
+            await Future<void>.delayed(Duration(milliseconds: 250 * (attempt + 1)));
+            continue;
+          }
+          rethrow;
+        }
+      }
       final out = <ChatMessage>[];
       for (final item in raw) {
         if (item is! Map) continue;
@@ -299,12 +314,10 @@ class OpencodeChatRepository implements ChatRepository {
       }
       talker.info('chat: sending prompt to session $sid: "$prompt"');
       try {
-        // The hub answers prompt_async only when the agent finishes (it
-        // holds the request open) — a short timeout is expected and NOT
-        // an error: the prompt is already queued, the reply arrives over
-        // SSE as busy → text → idle.
+        // OpenCode v2 uses POST /session/{id}/prompt. Hub proxies /chat/* and
+        // rewrites paths; send to /chat/session/$sid/prompt for compatibility.
         await _api.post(
-          '/chat/session/$sid/prompt_async',
+          '/chat/session/$sid/prompt',
           body: {
             'parts': [
               {'type': 'text', 'text': prompt},
@@ -315,14 +328,35 @@ class OpencodeChatRepository implements ChatRepository {
         talker.info('chat: prompt accepted by hub (fast reply)');
       } on HubApiException catch (e) {
         if (e.isTimeout) {
-          // The hub holds prompt_async open until the agent finishes —
+          // The hub may hold the prompt open until the agent finishes —
           // the prompt is already queued; keep listening over SSE.
           talker.warning(
-            'chat: prompt_async held open >10s — assuming accepted, '
+            'chat: prompt held open >10s — assuming accepted, '
             'waiting for SSE busy',
           );
         } else {
-          rethrow;
+          // Fallback to old endpoint if hub hasn't been updated in some env
+          try {
+            await _api.post(
+              '/chat/session/$sid/prompt_async',
+              body: {
+                'parts': [
+                  {'type': 'text', 'text': prompt},
+                ],
+              },
+              timeout: const Duration(seconds: 10),
+            );
+            talker.info('chat: prompt_async accepted by hub (fallback)');
+          } catch (e2) {
+            if (e2 is HubApiException && e2.isTimeout) {
+              talker.warning(
+                'chat: prompt_async held open >10s — assuming accepted, '
+                'waiting for SSE busy',
+              );
+            } else {
+              rethrow;
+            }
+          }
         }
       }
     } catch (e) {
@@ -331,7 +365,7 @@ class OpencodeChatRepository implements ChatRepository {
       rethrow;
     }
 
-    // The hub may hold prompt_async open for the whole agent run, so a
+    // The hub may hold the prompt open for the whole agent run, so a
     // timeout there is normal. If the agent never reports busy, though,
     // something is wrong — surface it instead of hanging forever.
     final busyWatchdog = Timer(const Duration(seconds: 60), () {
@@ -360,29 +394,54 @@ class OpencodeChatRepository implements ChatRepository {
 
   /// Returns this chat's session id, looking it up (or creating it) on the
   /// first call. The title lets the app resume the same conversation later.
-  Future<String> ensureSession() async {
+  Future<String> ensureSession() => ensureSessionWithRetry();
+
+  Future<String> ensureSessionWithRetry() async {
     final cached = _sessionId;
-    if (cached != null) return cached;
+    if (cached != null) {
+      // Verify session still exists (helps with race conditions)
+      for (var attempt = 0; attempt < 3; attempt++) {
+        try {
+          await _api.get('/chat/session/$cached');
+          return cached;
+        } catch (e) {
+          final msg = e.toString();
+          if (attempt < 2 && (msg.contains('404') || msg.contains('not found'))) {
+            await Future<void>.delayed(Duration(milliseconds: 200 * (attempt + 1)));
+            continue;
+          }
+          break;
+        }
+      }
+      _sessionId = null;
+    }
 
     talker.info('chat: ensureSession — looking for title "$_sessionTitle"');
-    final sessions = await _api.getList('/chat/session');
-    String? newestId;
-    var newestUpdated = -1;
-    for (final item in sessions) {
-      if (item is! Map || item['title'] != _sessionTitle) continue;
-      final id = item['id'];
-      final updated = (item['time'] as Map?)?['updated'];
-      if (id is! String) continue;
-      if (updated is num && updated.toInt() > newestUpdated) {
-        newestUpdated = updated.toInt();
-        newestId = id;
+    try {
+      final sessions = await _api.getList('/chat/session');
+      String? newestId;
+      var newestUpdated = -1;
+      for (final item in sessions) {
+        if (item is! Map || item['title'] != _sessionTitle) continue;
+        final id = item['id'];
+        final updated = (item['time'] as Map?)?['updated'];
+        if (id is! String) continue;
+        if (updated is num && updated.toInt() > newestUpdated) {
+          newestUpdated = updated.toInt();
+          newestId = id;
+        }
       }
+
+      if (newestId != null) {
+        talker.info('chat: ensureSession — resume existing session $newestId');
+        // Give session a moment to be fully ready
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+        return _sessionId = newestId;
+      }
+    } catch (e) {
+      talker.warning('chat: ensureSession — list failed: $e');
     }
 
-    if (newestId != null) {
-      talker.info('chat: ensureSession — resume existing session $newestId');
-      return _sessionId = newestId;
-    }
     talker.info('chat: ensureSession — no existing session, creating new');
     final created = await _api.post(
       '/chat/session',
@@ -394,6 +453,21 @@ class OpencodeChatRepository implements ChatRepository {
       throw const HubApiException(null, 'opencode не создал сессию');
     }
     talker.info('chat: ensureSession — created session $id');
+    // Small delay to avoid race when immediately fetching history
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    // Verify session is accessible
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        await _api.get('/chat/session/$id');
+        break;
+      } catch (e) {
+        if (attempt < 2) {
+          await Future<void>.delayed(Duration(milliseconds: 200 * (attempt + 1)));
+          continue;
+        }
+        // Don't fail hard - session might exist but endpoint behaves differently
+      }
+    }
     return _sessionId = id;
   }
 }
