@@ -99,7 +99,13 @@ class HubApi {
     bool quiet = false,
   }) async {
     final decoded = await _request('GET', path, query: query, quiet: quiet);
-    return decoded is List ? decoded : const [];
+    if (decoded is List) return decoded;
+    if (decoded is Map) {
+      final data = decoded['data'];
+      if (data is List) return data;
+      // some endpoints might return items directly
+    }
+    return const [];
   }
 
   Future<Map<String, dynamic>> post(
