@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/logging/app_logger.dart';
+import '../../core/push/push_payload.dart';
+import '../../core/push/push_service.dart';
 import '../../core/theme/retro_theme.dart';
 import '../../data/api/api_server_repository.dart';
 import '../../features/settings/settings_cubit.dart';
@@ -30,19 +32,27 @@ class _AppShellState extends State<AppShell> {
   ];
 
   int _index = 0;
+  PushService? _push;
 
   @override
   void initState() {
     super.initState();
-    final autoConnect =
-        context.read<SettingsCubit>().state.settings.connection.autoConnect;
-    if (autoConnect) {
+    _push = context.read<PushService>();
+    _push!.pendingTap.addListener(_onPushTap);
+    // A tap that launched the app may have been recorded before this shell
+    // mounted; consume it once the first frame is up.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onPushTap());
+    final settings = context.read<SettingsCubit>().state.settings;
+    if (settings.connection.autoConnect) {
       // Kick the link up once the first frame is on screen. A failed connect
       // (no base URL, hub down) must not crash: the UI drops to OFFLINE.
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
-        final connection =
-            context.read<SettingsCubit>().state.settings.connection;
+        final connection = context
+            .read<SettingsCubit>()
+            .state
+            .settings
+            .connection;
         talker.info(
           'connect → ${connection.apiBaseUrl.isEmpty ? "(base url пуст)" : connection.apiBaseUrl} · '
           'key ${connection.apiToken.isEmpty ? "НЕТ" : "есть"}',
@@ -57,6 +67,31 @@ class _AppShellState extends State<AppShell> {
       });
     }
   }
+
+  @override
+  void dispose() {
+    _push?.pendingTap.removeListener(_onPushTap);
+    super.dispose();
+  }
+
+  /// Switches to the tab a tapped push asked for. Unknown/current tabs are
+  /// no-ops, so a repeated tap never rebuilds the shell needlessly.
+  void _onPushTap() {
+    if (!mounted) return;
+    final target = _push?.pendingTap.value;
+    if (target == null) return;
+    final index = _indexForTarget(target);
+    if (index == null || index == _index) return;
+    setState(() => _index = index);
+  }
+
+  static int? _indexForTarget(PushTarget target) => switch (target) {
+    PushTarget.terminal => 0,
+    PushTarget.status => 1,
+    PushTarget.chat => 2,
+    PushTarget.control => 3,
+    PushTarget.settings => 4,
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -94,7 +129,11 @@ class _AppShellState extends State<AppShell> {
 }
 
 class _TabBar extends StatelessWidget {
-  const _TabBar({required this.index, required this.tabs, required this.onSelect});
+  const _TabBar({
+    required this.index,
+    required this.tabs,
+    required this.onSelect,
+  });
 
   final int index;
   final List<(String, IconData)> tabs;
@@ -145,7 +184,11 @@ class _TabButton extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 8),
         decoration: BoxDecoration(
           color: active ? palette.primary.withValues(alpha: 0.1) : null,
-          border: Border(top: BorderSide(color: active ? palette.accent : Colors.transparent)),
+          border: Border(
+            top: BorderSide(
+              color: active ? palette.accent : Colors.transparent,
+            ),
+          ),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,

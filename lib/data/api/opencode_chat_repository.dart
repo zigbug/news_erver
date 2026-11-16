@@ -4,6 +4,7 @@ import '../../core/logging/app_logger.dart';
 import '../../core/models/chat_message.dart';
 import '../repositories/chat_repository.dart';
 import 'hub_api.dart';
+import 'opencode_event_parser.dart';
 
 /// Chat backed by the headless `opencode serve` instance behind the hub.
 ///
@@ -13,16 +14,25 @@ import 'hub_api.dart';
 /// `POST /chat/session/{id}/prompt` (OpenCode v2), then forwards the assistant text as opencode
 /// accumulates it and closes once the session reports idle.
 class OpencodeChatRepository implements ChatRepository {
-  OpencodeChatRepository(this._api);
+  OpencodeChatRepository(
+    this._api, {
+    this.attachTimeout = const Duration(seconds: 15),
+    this.busyTimeout = const Duration(seconds: 60),
+    this.generationTimeout = const Duration(minutes: 30),
+  });
 
   /// Title used to recognise this chat's session in `GET /chat/session`.
   static const _sessionTitle = 'hub-chat';
 
-  /// Cap on a single generation — an agent run may be long, but not endless.
-  static const _generationTimeout = Duration(minutes: 30);
-
   /// How long to wait for the SSE link before sending the prompt.
-  static const _attachTimeout = Duration(seconds: 15);
+  final Duration attachTimeout;
+
+  /// How long the agent may stay silent after the prompt before the client
+  /// gives up and reports the failure instead of waiting forever.
+  final Duration busyTimeout;
+
+  /// Cap on a single generation — an agent run may be long, but not endless.
+  final Duration generationTimeout;
 
   final HubApi _api;
   String? _sessionId;
@@ -90,8 +100,13 @@ class OpencodeChatRepository implements ChatRepository {
           break;
         } catch (e) {
           final msg = e.toString();
-          if (attempt < 3 && (msg.contains('404') || msg.contains('not found') || msg.contains('создал'))) {
-            await Future<void>.delayed(Duration(milliseconds: 250 * (attempt + 1)));
+          if (attempt < 3 &&
+              (msg.contains('404') ||
+                  msg.contains('not found') ||
+                  msg.contains('создал'))) {
+            await Future<void>.delayed(
+              Duration(milliseconds: 250 * (attempt + 1)),
+            );
             continue;
           }
           rethrow;
@@ -102,8 +117,25 @@ class OpencodeChatRepository implements ChatRepository {
         if (item is! Map) continue;
         final info = item['info'];
         final infoMap = info is Map ? info : null;
-        final parts = item['parts'] ?? item['content'];
+        // v1 exposes the role as info.role; v2 uses item.type
+        // ("user"/"assistant"). Anything else (idle, compaction, tool …) is
+        // not part of the transcript.
+        final roleStr =
+            infoMap?['role'] ??
+            infoMap?['type'] ??
+            item['role'] ??
+            item['type'];
+        final isUser = roleStr == 'user';
+        final isAssistant = roleStr == 'assistant' || roleStr == 'bot';
+        if (!isUser && !isAssistant) continue;
+
         final text = <String>[];
+        // v2 user messages carry the prompt as a plain `text` field.
+        final direct = item['text'];
+        if (isUser && direct is String && direct.isNotEmpty) text.add(direct);
+        // v1 uses parts[], v2 uses content[]. Both keep text chunks in
+        // `{type: "text", text: "…"}` entries.
+        final parts = item['parts'] ?? item['content'];
         if (parts is List) {
           for (final part in parts) {
             if (part is Map && part['type'] == 'text') {
@@ -113,13 +145,15 @@ class OpencodeChatRepository implements ChatRepository {
           }
         }
         if (text.isEmpty) continue;
-        final roleStr = infoMap?['role'] ?? item['role'] ?? item['type'];
-        final role = roleStr == 'user' ? ChatRole.user : ChatRole.bot;
+        final role = isUser ? ChatRole.user : ChatRole.bot;
         final timeMap = (infoMap?['time'] as Map?) ?? (item['time'] as Map?);
         final created = timeMap?['created'];
         out.add(
           ChatMessage(
-            id: (infoMap?['id'] as String?) ?? (item['id'] as String?) ?? 'history-${out.length}',
+            id:
+                (infoMap?['id'] as String?) ??
+                (item['id'] as String?) ??
+                'history-${out.length}',
             role: role,
             text: text.join('\n'),
             timestamp: created is num
@@ -146,11 +180,16 @@ class OpencodeChatRepository implements ChatRepository {
     // first); the reply itself still fails through the timeout below.
     attached.future.ignore();
     var finished = false;
+    var failed = false;
     var sawBusy = false;
     var sawText = false;
+    // Guards against a replayed "execution started" event from a previous
+    // turn marking this reply busy before we have even sent the prompt.
+    var promptRequested = false;
     // Text parts in first-seen order. The answer arrives two ways: full
-    // snapshots over `message.part.updated` and incremental chunks over
-    // `message.part.delta`; whichever holds more characters wins per part.
+    // snapshots (`message.part.updated` in v1, `session.text.ended` in v2)
+    // and incremental chunks (`message.part.delta` / `session.text.delta`);
+    // whichever holds more characters wins per part.
     final textOrder = <String>[];
     final fullTexts = <String, String>{};
     final deltaTexts = <String, String>{};
@@ -183,6 +222,7 @@ class OpencodeChatRepository implements ChatRepository {
     void fail(Object error) {
       if (finished) return;
       finished = true;
+      failed = true;
       talker.error('chat: fail — $error');
       if (!controller.isClosed) {
         controller.addError(error);
@@ -207,31 +247,134 @@ class OpencodeChatRepository implements ChatRepository {
           },
         )
         .listen(
-          (event) {
+          (frame) {
             if (!attached.isCompleted) {
               talker.info('chat: SSE link attached (first event)');
               attached.complete();
             }
-            final props = event['properties'];
-            if (props is! Map) return;
-            final eventSession = props['sessionID'];
+            // The hub may forward opencode v2 events verbatim
+            // ({type, data}), wrap them in an SSE envelope ({event, data})
+            // or still speak the old v1 dialect ({type, properties}).
+            final event = parseOpencodeEvent(frame);
+            if (event == null) {
+              talker.debug('chat: unparsable event $frame');
+              return;
+            }
+            final props = event.data;
+            final eventSession = props['sessionID'] ?? frame['sessionID'];
             if (eventSession != sid) {
               talker.debug(
-                'chat: skip event type=${event['type']} '
+                'chat: skip event type=${event.type} '
                 'session=$eventSession (want $sid)',
               );
               return;
             }
-            switch (event['type']) {
+
+            // v2 identifies a text part by its message id + ordinal.
+            String textPartKey() =>
+                '${props['assistantMessageID'] ?? ''}:'
+                '${props['ordinal'] ?? ''}';
+
+            switch (event.type) {
+              // ---- opencode v2 ----
+              case 'session.execution.started':
+                // A replayed event from the previous turn must not mark
+                // this reply busy before the prompt has been sent.
+                if (!promptRequested) return;
+                // Liveness: the agent is running even if it is still doing
+                // tool calls. Disarms the client-side first-chunk fallback.
+                if (!sawBusy) emit();
+                sawBusy = true;
+              case 'session.execution.succeeded':
+                if (!sawBusy) return;
+                finish();
+              case 'session.execution.interrupted':
+                if (!sawBusy) return;
+                finish();
+              case 'session.execution.failed':
+                if (!sawBusy) return;
+                final error = props['error'];
+                final message = error is Map ? error['message'] : null;
+                fail(
+                  HubApiException(
+                    null,
+                    'агент завершил ход с ошибкой: ${message ?? 'unknown'}',
+                  ),
+                );
+              case 'session.idle':
+                // The whole agent run is over; only now is the answer final.
+                if (sawBusy) finish();
+              case 'session.text.started':
+                // Announces a text part before its first delta. Nothing to
+                // render yet, but the part must stay in first-seen order.
+                if (!sawBusy) return;
+                sawText = true;
+                final startedKey = textPartKey();
+                if (!textOrder.contains(startedKey)) {
+                  textOrder.add(startedKey);
+                }
+              case 'session.text.delta':
+                if (!sawBusy) return;
+                final chunk = props['delta'];
+                if (chunk is! String || chunk.isEmpty) return;
+                sawText = true;
+                final deltaKey = textPartKey();
+                if (!textOrder.contains(deltaKey)) textOrder.add(deltaKey);
+                deltaTexts[deltaKey] = (deltaTexts[deltaKey] ?? '') + chunk;
+                emit();
+              case 'session.text.ended':
+                // Carries the full text of the part — authoritative.
+                if (!sawBusy) return;
+                sawText = true;
+                final endedKey = textPartKey();
+                if (!textOrder.contains(endedKey)) textOrder.add(endedKey);
+                final text = props['text'];
+                if (text is String) {
+                  final delta = deltaTexts[endedKey] ?? '';
+                  fullTexts[endedKey] = text.length >= delta.length
+                      ? text
+                      : delta;
+                }
+                emit();
+              case 'session.message.content.updated':
+                // Durable fallback: full content of an assistant message.
+                // Only used when the live text.* events never arrived, so
+                // the same text cannot be appended twice.
+                if (!sawBusy) return;
+                final messageID = props['messageID'];
+                final content = props['content'];
+                if (messageID is! String || content is! List) return;
+                final prefix = '$messageID:';
+                if (textOrder.any((key) => key.startsWith(prefix))) return;
+                for (var i = 0; i < content.length; i++) {
+                  final contentPart = content[i];
+                  if (contentPart is! Map || contentPart['type'] != 'text') {
+                    continue;
+                  }
+                  final contentText = contentPart['text'];
+                  if (contentText is! String || contentText.isEmpty) continue;
+                  final contentKey = '$messageID:$i';
+                  if (!textOrder.contains(contentKey)) {
+                    textOrder.add(contentKey);
+                  }
+                  fullTexts[contentKey] = contentText;
+                  sawText = true;
+                }
+                emit();
+              // ---- opencode v1 ----
               case 'session.status':
                 final status = props['status'];
                 final type = status is Map ? status['type'] : null;
                 talker.info('chat: session.status → $type');
                 if (type == 'busy') {
-                  sawBusy = true;
+                  if (promptRequested && !sawBusy) {
+                    // Liveness signal for the client-side fallback.
+                    emit();
+                  }
+                  if (promptRequested) sawBusy = true;
                 } else if (type == 'idle' && sawBusy) {
-                  // The whole agent run is over (multi-step runs go
-                  // busy→…→busy→idle); only now is the answer final.
+                  // Multi-step runs go busy→…→busy→idle; only the final
+                  // idle closes the answer.
                   finish();
                 }
               case 'message.part.updated':
@@ -281,7 +424,7 @@ class OpencodeChatRepository implements ChatRepository {
                   'finish=$finishReason',
                 );
               default:
-                talker.debug('chat: unhandled event ${event['type']}');
+                talker.debug('chat: unhandled event ${event.type}');
             }
           },
           onError: (Object error) {
@@ -300,14 +443,14 @@ class OpencodeChatRepository implements ChatRepository {
       // The prompt must not go out before the stream is attached, or the
       // busy/idle handshake would be missed and the reply never settle.
       talker.info(
-        'chat: waiting for SSE attach (timeout ${_attachTimeout.inSeconds}s)',
+        'chat: waiting for SSE attach (timeout ${attachTimeout.inSeconds}s)',
       );
       try {
-        await attached.future.timeout(_attachTimeout);
+        await attached.future.timeout(attachTimeout);
       } on TimeoutException {
         final error = HubApiException(
           null,
-          'SSE-канал не поднялся за ${_attachTimeout.inSeconds}s '
+          'SSE-канал не поднялся за ${attachTimeout.inSeconds}s '
           '(hub: GET /chat/event). Проверь base URL и логи hub.',
         );
         talker.error('chat: $error');
@@ -315,13 +458,12 @@ class OpencodeChatRepository implements ChatRepository {
         throw error;
       }
       talker.info('chat: sending prompt to session $sid: "$prompt"');
+      promptRequested = true;
       try {
         // OpenCode v2.2.1: POST /api/session/{id}/prompt expects {"text": "..."}
         await _api.post(
           '/chat/session/$sid/prompt',
-          body: {
-            'text': prompt,
-          },
+          body: {'text': prompt},
           timeout: const Duration(seconds: 10),
         );
         talker.info('chat: prompt accepted by hub (fast reply)');
@@ -385,20 +527,25 @@ class OpencodeChatRepository implements ChatRepository {
     // The hub may hold the prompt open for the whole agent run, so a
     // timeout there is normal. If the agent never reports busy, though,
     // something is wrong — surface it instead of hanging forever.
-    final busyWatchdog = Timer(const Duration(seconds: 60), () {
+    final busyWatchdog = Timer(busyTimeout, () {
       if (!sawBusy && !finished) {
         fail(
-          const HubApiException(
+          HubApiException(
             null,
-            'агент не вышел в busy за 60s после prompt — '
-            'проверь opencode на сервере',
+            'агент не вышел в busy за ${_durationLabel(busyTimeout)} '
+            'после prompt — проверь opencode на сервере',
           ),
         );
       }
     });
 
-    final watchdog = Timer(_generationTimeout, () {
-      fail(const HubApiException(null, 'агент не ответил за 30 минут'));
+    final watchdog = Timer(generationTimeout, () {
+      fail(
+        HubApiException(
+          null,
+          'агент не ответил за ${_durationLabel(generationTimeout)}',
+        ),
+      );
     });
     try {
       yield* controller.stream;
@@ -406,6 +553,14 @@ class OpencodeChatRepository implements ChatRepository {
       watchdog.cancel();
       busyWatchdog.cancel();
       await subscription.cancel();
+      talker.info(
+        'chat: reply finished — '
+        '${failed
+            ? 'failed'
+            : finished
+            ? 'closed'
+            : 'aborted'}',
+      );
     }
   }
 
@@ -423,8 +578,11 @@ class OpencodeChatRepository implements ChatRepository {
           return cached;
         } catch (e) {
           final msg = e.toString();
-          if (attempt < 2 && (msg.contains('404') || msg.contains('not found'))) {
-            await Future<void>.delayed(Duration(milliseconds: 200 * (attempt + 1)));
+          if (attempt < 2 &&
+              (msg.contains('404') || msg.contains('not found'))) {
+            await Future<void>.delayed(
+              Duration(milliseconds: 200 * (attempt + 1)),
+            );
             continue;
           }
           break;
@@ -464,7 +622,11 @@ class OpencodeChatRepository implements ChatRepository {
       '/chat/session',
       body: {'title': _sessionTitle},
     );
-    final id = created['id'];
+    // v2 answers with {data: Session.Info}; older hubs returned the session
+    // object directly.
+    final createdData = created['data'];
+    final createdSession = createdData is Map ? createdData : created;
+    final id = createdSession['id'];
     if (id is! String || id.isEmpty) {
       talker.error('chat: ensureSession — hub returned no id: $created');
       throw const HubApiException(null, 'opencode не создал сессию');
@@ -479,7 +641,9 @@ class OpencodeChatRepository implements ChatRepository {
         break;
       } catch (e) {
         if (attempt < 2) {
-          await Future<void>.delayed(Duration(milliseconds: 200 * (attempt + 1)));
+          await Future<void>.delayed(
+            Duration(milliseconds: 200 * (attempt + 1)),
+          );
           continue;
         }
         // Don't fail hard - session might exist but endpoint behaves differently
@@ -487,4 +651,12 @@ class OpencodeChatRepository implements ChatRepository {
     }
     return _sessionId = id;
   }
+}
+
+/// Human-readable duration for error messages: "150ms", "60s", "30 мин".
+String _durationLabel(Duration duration) {
+  if (duration.inMilliseconds < 1000) return '${duration.inMilliseconds}ms';
+  if (duration.inSeconds < 60) return '${duration.inSeconds}s';
+  if (duration.inMinutes < 60) return '${duration.inMinutes} мин';
+  return '${duration.inHours} ч';
 }

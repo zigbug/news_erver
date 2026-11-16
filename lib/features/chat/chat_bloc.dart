@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/logging/app_logger.dart';
@@ -10,7 +12,10 @@ import 'chat_state.dart';
 /// over SSE; this bloc grows the pending bubble as chunks arrive and settles
 /// it when the agent goes idle.
 class ChatBloc extends Bloc<ChatEvent, ChatState> {
-  ChatBloc(this._repository) : super(const ChatState()) {
+  ChatBloc(
+    this._repository, {
+    this.firstChunkTimeout = const Duration(seconds: 90),
+  }) : super(const ChatState()) {
     on<ChatStarted>(_onStarted);
     on<ChatPromptSent>(_onPromptSent);
     on<ChatStopped>(_onStopped);
@@ -18,6 +23,13 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
   }
 
   final ChatRepository _repository;
+
+  /// Hard deadline for the first chunk of a reply. The repository has its own
+  /// busy watchdog, but the operator must never be left staring at a spinner
+  /// because that error got lost somewhere — this timer unblocks the UI on
+  /// its own and reports the failure in the transcript.
+  final Duration firstChunkTimeout;
+
   int _seq = 0;
 
   /// Set while a reply is streaming so [ChatStopped] knows there is a run to
@@ -30,9 +42,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     emit(
       state.copyWith(
         suggestions: _repository.suggestions,
-        messages: [
-          _message(ChatRole.bot, _repository.greeting),
-        ],
+        messages: [_message(ChatRole.bot, _repository.greeting)],
       ),
     );
 
@@ -81,10 +91,50 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       ),
     );
 
+    // Reports the failure once, replacing the spinner with an error line in
+    // the same position. Later failures on the same run are swallowed.
+    var reported = false;
+    void report(Object error) {
+      if (reported || emit.isDone) return;
+      reported = true;
+      final list = state.messages.toList();
+      final index = list.indexWhere((m) => m.id == pending.id);
+      final failure = _message(
+        ChatRole.system,
+        'ошибка чата: $error\nподробности — в логах (кнопка ▤)',
+      );
+      if (index == -1) {
+        list.add(failure);
+      } else {
+        list[index] = failure;
+      }
+      emit(state.copyWith(messages: list, thinking: false, typing: false));
+    }
+
+    var answered = false;
+    final guard = Timer(firstChunkTimeout, () {
+      if (answered || reported || emit.isDone) return;
+      final error =
+          'агент не начал отвечать за ${_secondsLabel(firstChunkTimeout)} — '
+          'ожидание прервано';
+      talker.error('chat: no first chunk — $error');
+      report(error);
+      // Abort the run on the server so a late answer cannot leak into the
+      // next turn once the operator has seen the failure.
+      unawaited(_repository.stop());
+    });
+
     try {
       await emit.forEach(
         _repository.reply(prompt),
         onData: (String text) {
+          // An empty chunk is a liveness ping (the run went busy), not an
+          // answer — it only disarms the first-chunk watchdog.
+          if (text.isEmpty) {
+            answered = true;
+            return state;
+          }
+          answered = true;
           final index = state.messages.indexWhere((m) => m.id == pending.id);
           if (index == -1) return state;
           final list = [...state.messages];
@@ -94,18 +144,9 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       );
     } catch (e) {
       talker.error('chat: reply stream failed: $e');
-      if (!emit.isDone) {
-        // Drop the pending bubble here — _settle would otherwise replace
-        // it with a second "no answer" note on top of this error message.
-        final list = state.messages.toList();
-        list.removeWhere((m) => m.id == pending.id);
-        emit(
-          state.copyWith(
-            messages: [...list, _message(ChatRole.system, 'ошибка чата: $e')],
-          ),
-        );
-      }
+      report(e);
     } finally {
+      guard.cancel();
       _pending = null;
       if (!emit.isDone) _settle(pending, emit);
     }
@@ -181,4 +222,11 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         timestamp: DateTime.now(),
         pending: pending,
       );
+}
+
+/// "150ms", "90s", "2 мин" — compact duration for user-facing messages.
+String _secondsLabel(Duration duration) {
+  if (duration.inMilliseconds < 1000) return '${duration.inMilliseconds}ms';
+  if (duration.inSeconds < 60) return '${duration.inSeconds}s';
+  return '${duration.inMinutes} мин';
 }

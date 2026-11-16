@@ -8,7 +8,12 @@ import '../../core/models/app_settings.dart';
 
 /// Raised when the hub is unreachable or answers with a non-2xx status.
 class HubApiException implements Exception {
-  const HubApiException(this.statusCode, this.message, {this.body, this.isTimeout = false});
+  const HubApiException(
+    this.statusCode,
+    this.message, {
+    this.body,
+    this.isTimeout = false,
+  });
 
   /// HTTP status, or null when the request never completed (offline/timeout).
   final int? statusCode;
@@ -158,11 +163,7 @@ class HubApi {
           '$method $uri → таймаут (${effectiveTimeout.inSeconds}s)',
         );
       }
-      throw const HubApiException(
-        null,
-        'таймаут ответа хаба',
-        isTimeout: true,
-      );
+      throw const HubApiException(null, 'таймаут ответа хаба', isTimeout: true);
     } catch (e) {
       if (!quiet) talker.error('$method $uri → нет связи: $e');
       throw HubApiException(null, 'нет связи с хабом: $e');
@@ -258,24 +259,46 @@ class HubApi {
           index = buffer.indexOf('\n\n');
 
           final data = <String>[];
+          String? eventName;
           for (final line in frame.split('\n')) {
-            if (line.startsWith('data:')) {
+            if (line.startsWith('event:')) {
+              eventName = line.substring(6).trim();
+            } else if (line.startsWith('data:')) {
               data.add(line.substring(5).replaceFirst(RegExp(r'^ '), ''));
             }
           }
           if (data.isEmpty) continue; // comment / keep-alive frame
           frameCount++;
           try {
-            final decoded = jsonDecode(data.join('\n'));
-            if (decoded is Map<String, dynamic>) {
-              if (frameCount <= 100) talker.debug('SSE #$frameCount: $decoded');
-              yield decoded;
-            } else if (decoded is Map) {
-              if (frameCount <= 100) {
-                talker.debug('SSE #$frameCount: $decoded');
+            var decoded = jsonDecode(data.join('\n'));
+            // Some SSE stacks double-encode the payload as a JSON string.
+            if (decoded is String) {
+              try {
+                decoded = jsonDecode(decoded);
+              } catch (_) {
+                // Plain text frame — not an event.
+                continue;
               }
-              yield decoded.cast<String, dynamic>();
             }
+            Map<String, dynamic>? event;
+            if (decoded is Map<String, dynamic>) {
+              event = decoded;
+            } else if (decoded is Map) {
+              event = decoded.cast<String, dynamic>();
+            }
+            if (event == null) continue;
+            // A standard SSE frame carries the type on the `event:` line while
+            // `data:` holds only the payload. OpenCode v2 puts the type inside
+            // the payload too, but keep the frame name as a fallback so both
+            // shapes survive the trip through the hub.
+            if (eventName != null &&
+                eventName.isNotEmpty &&
+                event['type'] == null &&
+                event['event'] == null) {
+              event['event'] = eventName;
+            }
+            if (frameCount <= 100) talker.debug('SSE #$frameCount: $event');
+            yield event;
           } catch (_) {
             // Not JSON — keep-alive noise, ignore.
           }

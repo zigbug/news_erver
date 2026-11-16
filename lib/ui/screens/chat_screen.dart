@@ -148,13 +148,16 @@ class _MessageRow extends StatelessWidget {
 
   final ChatMessage message;
 
+  bool get _isError =>
+      message.role == ChatRole.system && message.text.startsWith('ошибка');
+
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
     final color = switch (message.role) {
       ChatRole.user => palette.accent,
       ChatRole.bot => palette.primary,
-      ChatRole.system => palette.primaryDim,
+      ChatRole.system => _isError ? palette.warning : palette.primaryDim,
     };
 
     return Padding(
@@ -191,10 +194,11 @@ class _MessageRow extends StatelessWidget {
                 ? Text(
                     message.text,
                     style: context.retroStyle(
-                      size: 11,
-                      color: palette.primaryDim,
+                      size: _isError ? 12 : 11,
+                      weight: _isError ? FontWeight.w600 : FontWeight.w400,
+                      color: color,
                       glow: false,
-                      fontStyle: FontStyle.italic,
+                      fontStyle: _isError ? null : FontStyle.italic,
                     ),
                   )
                 : Row(

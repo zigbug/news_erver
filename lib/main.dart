@@ -10,51 +10,50 @@ import 'package:talker_bloc_logger/talker_bloc_logger.dart';
 
 import 'app.dart';
 import 'core/logging/app_logger.dart';
+import 'core/push/push_payload.dart';
 import 'core/push/push_service.dart';
 
+/// Android 8+ fixes sound and importance per channel, so "loud vs quiet" is
+/// selected by channel id, not by per-notification flags. Ids are part of the
+/// hub contract — never rename them; installed users keep their old channel
+/// settings.
 Future<void> _createNotificationChannels() async {
-  final plugin = FlutterLocalNotificationsPlugin();
+  final android = FlutterLocalNotificationsPlugin()
+      .resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin
+      >();
+  if (android == null) return;
 
-  const critical = AndroidNotificationChannel(
-    'hub_critical',
-    'Критичные события',
-    description: 'Падение сервиса, сбои',
-    importance: Importance.high,
-    playSound: true,
-    enableVibration: true,
-  );
-  const alerts = AndroidNotificationChannel(
-    'hub_alerts',
-    'Оповещения',
-    description: 'Сообщения от ассистента и статуса',
-    importance: Importance.high,
-    playSound: true,
-    enableVibration: true,
-  );
-  const silent = AndroidNotificationChannel(
-    'hub_silent',
-    'Фоновые события',
-    description: 'Технические события',
-    importance: Importance.low,
-    playSound: false,
-    enableVibration: false,
-  );
+  final channels = <AndroidNotificationChannel>[
+    AndroidNotificationChannel(
+      kPushCriticalChannel,
+      channelNameFor(kPushCriticalChannel),
+      description: channelDescriptionFor(kPushCriticalChannel),
+      importance: Importance.high,
+      playSound: true,
+      enableVibration: true,
+    ),
+    AndroidNotificationChannel(
+      kPushAlertChannel,
+      channelNameFor(kPushAlertChannel),
+      description: channelDescriptionFor(kPushAlertChannel),
+      importance: Importance.high,
+      playSound: true,
+      enableVibration: true,
+    ),
+    AndroidNotificationChannel(
+      kPushQuietChannel,
+      channelNameFor(kPushQuietChannel),
+      description: channelDescriptionFor(kPushQuietChannel),
+      importance: Importance.low,
+      playSound: false,
+      enableVibration: false,
+    ),
+  ];
 
-  await plugin
-      .resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin
-      >()
-      ?.createNotificationChannel(critical);
-  await plugin
-      .resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin
-      >()
-      ?.createNotificationChannel(alerts);
-  await plugin
-      .resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin
-      >()
-      ?.createNotificationChannel(silent);
+  for (final channel in channels) {
+    await android.createNotificationChannel(channel);
+  }
 }
 
 Future<void> main() async {

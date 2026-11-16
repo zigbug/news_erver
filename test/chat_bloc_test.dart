@@ -24,6 +24,10 @@ class _FakeChatRepository implements ChatRepository {
   /// When true, [reply] yields exactly one chunk then waits forever.
   bool hangAfterFirstChunk = false;
 
+  /// When true, [reply] never yields anything and never completes — an agent
+  /// that silently swallowed the prompt.
+  bool silent = false;
+
   @override
   String get greeting => 'hello operator';
 
@@ -47,13 +51,18 @@ class _FakeChatRepository implements ChatRepository {
   @override
   Stream<String> reply(String prompt) async* {
     calls++;
-    yield 'answer ';
-    if (hangAfterFirstChunk) {
+    if (silent) {
       await (hold ??= Completer<void>()).future;
       return;
     }
+    var text = 'answer ';
+    yield text;
+    if (hangAfterFirstChunk) {
+      await (hold ??= Completer<void>()).future;
+    }
     if (failWith != null) throw failWith!;
-    yield 'for $prompt';
+    text += 'for $prompt';
+    yield text;
   }
 }
 
@@ -74,11 +83,11 @@ Future<void> _waitUntil(
 }
 
 void main() {
-  test('greets on start with bot and system messages', () async {
+  test('greets on start with a bot message', () async {
     final bloc = ChatBloc(_FakeChatRepository())..add(const ChatStarted());
     await pumpEventQueue();
 
-    expect(bloc.state.messages.length, 2);
+    expect(bloc.state.messages.length, 1);
     expect(bloc.state.messages.first.role, ChatRole.bot);
     expect(bloc.state.messages.first.text, 'hello operator');
     expect(bloc.state.suggestions, ['status']);
@@ -104,19 +113,19 @@ void main() {
     final bloc = ChatBloc(repository)..add(const ChatStarted());
     await pumpEventQueue();
 
-    expect(bloc.state.messages.length, 4);
-    expect(bloc.state.messages[2].text, 'привет');
-    expect(bloc.state.messages[3].text, 'здравствуй');
+    expect(bloc.state.messages.length, 3);
+    expect(bloc.state.messages[1].text, 'привет');
+    expect(bloc.state.messages[2].text, 'здравствуй');
     await bloc.close();
   });
 
   test('answers the prompt and settles on the full bot text', () async {
-    final repository = _FakeChatRepository();
+    final repository = _FakeChatRepository()..hangAfterFirstChunk = true;
     final bloc = ChatBloc(repository)..add(const ChatStarted());
     await pumpEventQueue();
 
     bloc.add(const ChatPromptSent('status'));
-    await pumpEventQueue();
+    await _waitUntil(() => bloc.state.busy && repository.hold != null);
 
     expect(
       bloc.state.messages.any((m) => m.role == ChatRole.user),
@@ -129,7 +138,8 @@ void main() {
       reason: 'the chat stays busy while the reply stream is open',
     );
 
-    await _waitUntil(() => !bloc.state.busy && bloc.state.messages.length >= 4);
+    repository.hold!.complete();
+    await _waitUntil(() => !bloc.state.busy && bloc.state.messages.length >= 3);
 
     final last = bloc.state.messages.last;
     expect(repository.calls, 1);
@@ -140,17 +150,20 @@ void main() {
   });
 
   test('grows the pending bubble while chunks arrive', () async {
-    final bloc = ChatBloc(_FakeChatRepository())..add(const ChatStarted());
+    final repository = _FakeChatRepository()..hangAfterFirstChunk = true;
+    final bloc = ChatBloc(repository)..add(const ChatStarted());
     await pumpEventQueue();
 
     bloc.add(const ChatPromptSent('status'));
-    await pumpEventQueue();
 
-    await _waitUntil(() => bloc.state.messages.length >= 4);
+    await _waitUntil(
+      () => bloc.state.messages.length >= 3 && repository.hold != null,
+    );
     final first = bloc.state.messages.last;
     expect(first.pending, isTrue);
     expect(first.text, 'answer ', reason: 'first chunk renders immediately');
 
+    repository.hold!.complete();
     await _waitUntil(() => !bloc.state.busy);
     expect(bloc.state.messages.last.text, 'answer for status');
     await bloc.close();
@@ -174,6 +187,39 @@ void main() {
     await bloc.close();
   });
 
+  test(
+    'first-chunk watchdog unblocks the UI when the agent stays silent',
+    () async {
+      final repository = _FakeChatRepository()..silent = true;
+      final bloc = ChatBloc(
+        repository,
+        firstChunkTimeout: const Duration(milliseconds: 80),
+      )..add(const ChatStarted());
+      await pumpEventQueue();
+
+      bloc.add(const ChatPromptSent('status'));
+      await _waitUntil(() => bloc.state.busy);
+
+      await _waitUntil(() => !bloc.state.busy);
+      final system = bloc.state.messages.where(
+        (m) => m.role == ChatRole.system,
+      );
+      expect(system, isNotEmpty);
+      expect(system.last.text, contains('не начал отвечать'));
+      expect(
+        bloc.state.messages.any((m) => m.pending),
+        isFalse,
+        reason: 'the spinner must be replaced by the error line',
+      );
+      expect(repository.stops, 1, reason: 'the stuck server run is aborted');
+
+      // Release the fake stream so the bloc can be closed cleanly.
+      repository.hold?.complete();
+      await pumpEventQueue();
+      await bloc.close();
+    },
+  );
+
   test('ignores empty prompts', () async {
     final repository = _FakeChatRepository();
     final bloc = ChatBloc(repository)..add(const ChatStarted());
@@ -183,7 +229,7 @@ void main() {
     await pumpEventQueue();
 
     expect(repository.calls, 0);
-    expect(bloc.state.messages.length, 2);
+    expect(bloc.state.messages.length, 1);
     await bloc.close();
   });
 
