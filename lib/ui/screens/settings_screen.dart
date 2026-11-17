@@ -44,7 +44,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     final connection = context.read<SettingsCubit>().state.settings.connection;
     _baseUrl = TextEditingController(text: connection.apiBaseUrl);
-    _password = TextEditingController(text: '');
+    _password = TextEditingController(text: connection.adminPassword);
   }
 
   @override
@@ -63,7 +63,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
       final current = context.read<SettingsCubit>().state.settings.connection;
       context.read<SettingsCubit>().updateConnection(
-        current.copyWith(apiBaseUrl: _baseUrl.text.trim()),
+        current.copyWith(
+          apiBaseUrl: _baseUrl.text.trim(),
+          adminPassword: _password.text,
+        ),
       );
     });
   }
@@ -96,10 +99,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
       final current = context.read<SettingsCubit>().state.settings.connection;
       await context.read<SettingsCubit>().updateConnection(
-        current.copyWith(apiBaseUrl: base, apiToken: key),
+        current.copyWith(
+          apiBaseUrl: base,
+          apiToken: key,
+          adminPassword: password,
+        ),
       );
       if (!mounted) return;
-      _password.clear();
       setState(() {
         _pingResult = 'ключ получен · ${maskSecret(key)}';
         _pingOk = true;
@@ -410,7 +416,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       _password,
                       obscure: true,
                       hint: 'ADMIN_PASSWORD',
-                      showStored: false,
                     ),
                     const SizedBox(height: 8),
                     Row(
@@ -613,7 +618,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             controller: controller,
             obscureText: obscure,
             obscuringCharacter: '•',
-            onChanged: obscure ? null : (_) => _scheduleSave(),
+            onChanged: (_) => _scheduleSave(),
             style: context.retroStyle(size: 13, letterSpacing: 0.4),
             decoration: InputDecoration(hintText: hint),
           ),

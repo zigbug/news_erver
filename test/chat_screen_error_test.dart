@@ -30,10 +30,13 @@ class _FailingRepository implements ChatRepository {
   Future<void> stop() async {}
 
   @override
-  Stream<String> reply(String prompt) async* {
+  Stream<String> reply(String prompt, {Map<String, String>? model}) async* {
     await Future<void>.delayed(const Duration(milliseconds: 100));
     throw TimeoutException('агент не вышел в busy за 60s');
   }
+
+  @override
+  Future<List<ChatModelOption>> availableModels() async => const [];
 }
 
 void main() {

@@ -10,9 +10,10 @@ import 'opencode_event_parser.dart';
 ///
 /// One session (reused by title) keeps the transcript alive across app
 /// launches. A reply is produced over SSE: the repository opens
-/// `GET /chat/event` first, waits until the link is attached, fires
-/// `POST /chat/session/{id}/prompt` (OpenCode v2), then forwards the assistant text as opencode
-/// accumulates it and closes once the session reports idle.
+/// `GET /chat/event` first, waits until the link is attached, fires a prompt,
+/// then forwards assistant text as opencode accumulates it and closes once the
+/// session reports idle/completion. Compatible with opencode 2.3.x event shapes
+/// proxied by server_hub under `/chat/*`.
 class OpencodeChatRepository implements ChatRepository {
   OpencodeChatRepository(
     this._api, {
@@ -51,6 +52,116 @@ class OpencodeChatRepository implements ChatRepository {
   ];
 
   @override
+  Future<List<ChatModelOption>> availableModels() async {
+    Future<List<ChatModelOption>> parseProviders(Object? decoded) async {
+      final out = <ChatModelOption>[];
+      void addModel(String providerID, String modelID, String? name) {
+        if (providerID.isEmpty || modelID.isEmpty) return;
+        final id = '$providerID/$modelID';
+        if (out.any((m) => m.id == id)) return;
+        out.add(ChatModelOption(
+          providerID: providerID,
+          modelID: modelID,
+          name: (name == null || name.trim().isEmpty) ? id : name.trim(),
+        ));
+      }
+
+      Map<String, dynamic>? asMap(Object? v) =>
+          v is Map ? v.cast<String, dynamic>() : null;
+      List<dynamic>? asList(Object? v) => v is List ? v : null;
+
+      final root = asMap(decoded) ?? <String, dynamic>{};
+      // Shapes:
+      // - {providers:[{id,name,models:{id:{name}} or [{id,name}]}], default:{provider:model}}
+      // - {all:[...], connected:[...], default:{...}}
+      // - {data:[{id,modelID,providerID,name,...}]} (flat model list, hub /chat/model)
+      final providers = asList(root['providers']) ??
+          asList(root['all']) ??
+          asList(root['data']) ??
+          (decoded is List ? decoded : const []);
+
+      for (final p in providers) {
+        final pm = asMap(p);
+        if (pm == null) continue;
+
+        final models = pm['models'];
+        final hasNestedModels = models is Map || models is List;
+        final providerID =
+            (pm['providerID'] ?? pm['id'] ?? pm['name'])?.toString() ?? '';
+        final providerName = (pm['name'] ?? providerID).toString();
+
+        if (hasNestedModels) {
+          final pid = (pm['id'] ?? pm['providerID'] ?? pm['name'])?.toString() ?? '';
+          final pname = (pm['name'] ?? pid).toString();
+          if (models is Map) {
+            for (final entry in models.entries) {
+              final mm = asMap(entry.value);
+              final modelID = (mm?['id'] ?? mm?['modelID'] ?? entry.key).toString();
+              final modelName = (mm?['name'] ?? modelID).toString();
+              addModel(pid, modelID, '$pname / $modelName');
+            }
+          } else if (models is List) {
+            for (final m in models) {
+              final mm = asMap(m);
+              if (mm == null) continue;
+              final modelID = (mm['id'] ?? mm['modelID'])?.toString() ?? '';
+              final modelName = (mm['name'] ?? modelID).toString();
+              addModel(pid, modelID, '$pname / $modelName');
+            }
+          }
+          continue;
+        }
+
+        // Flat model entry (e.g. hub /chat/model: {id, modelID, providerID, name})
+        final flatProviderID = (pm['providerID'] ?? '').toString();
+        final flatModelID =
+            (pm['modelID'] ?? pm['id'] ?? pm['name'])?.toString() ?? '';
+        if (flatProviderID.isNotEmpty && flatModelID.isNotEmpty) {
+          final modelName = (pm['name'] ?? flatModelID).toString();
+          addModel(flatProviderID, flatModelID, '$flatProviderID / $modelName');
+          continue;
+        }
+
+        // Fallback: treat as provider id with no nested models only if unusable
+        if (providerID.isNotEmpty && flatModelID.isNotEmpty && !hasNestedModels) {
+          addModel(providerID, flatModelID, '$providerName / $flatModelID');
+        }
+      }
+
+      // Fallback: defaults map {providerID:modelID}
+      final defaults = asMap(root['default']);
+      if (out.isEmpty && defaults != null) {
+        for (final e in defaults.entries) {
+          addModel(e.key, e.value.toString(), '${e.key}/${e.value}');
+        }
+      }
+      out.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      return out;
+    }
+
+    for (final path in const [
+      '/chat/model',
+      '/chat/config/providers',
+      '/chat/provider',
+      '/model',
+      '/config/providers',
+      '/provider',
+    ]) {
+      try {
+        final decoded = await _api.get(path);
+        final models = await parseProviders(decoded);
+        if (models.isNotEmpty) {
+          talker.info('chat: loaded ${models.length} models from $path');
+          return models;
+        }
+      } catch (e) {
+        talker.debug('chat: models probe $path failed: $e');
+      }
+    }
+    return const [];
+  }
+
+  @override
   Future<void> stop() async {
     final sid = _sessionId;
     if (sid == null) {
@@ -58,15 +169,28 @@ class OpencodeChatRepository implements ChatRepository {
       return;
     }
     talker.info('chat: aborting run in session $sid');
-    try {
-      await _api.post('/chat/session/$sid/abort');
-      talker.info('chat: abort acknowledged by opencode');
-    } on HubApiException catch (e) {
-      // A run may already be gone — the abort is best-effort, the local
-      // stream is what actually unblocks the operator.
-      talker.warning('chat: abort session $sid failed: $e');
-    } catch (e) {
-      talker.warning('chat: abort session $sid failed: $e');
+    var ok = false;
+    for (final path in [
+      '/chat/session/$sid/abort',
+      '/chat/session/$sid/interrupt',
+      '/chat/session/$sid/message/abort',
+    ]) {
+      try {
+        await _api.post(path);
+        talker.info('chat: abort acknowledged via $path');
+        ok = true;
+        break;
+      } on HubApiException catch (e) {
+        if (e.statusCode == 404 || e.statusCode == 405) {
+          continue;
+        }
+        talker.warning('chat: abort $path failed: $e');
+      } catch (e) {
+        talker.warning('chat: abort $path failed: $e');
+      }
+    }
+    if (!ok) {
+      talker.warning('chat: abort session $sid not supported by hub (best-effort)');
     }
   }
 
@@ -171,7 +295,7 @@ class OpencodeChatRepository implements ChatRepository {
   }
 
   @override
-  Stream<String> reply(String prompt) async* {
+  Stream<String> reply(String prompt, {Map<String, String>? model}) async* {
     final sid = await ensureSession();
 
     final controller = StreamController<String>();
@@ -278,53 +402,50 @@ class OpencodeChatRepository implements ChatRepository {
             switch (event.type) {
               // ---- opencode v2 ----
               case 'session.execution.started':
-                // A replayed event from the previous turn must not mark
-                // this reply busy before the prompt has been sent.
                 if (!promptRequested) return;
-                // Liveness: the agent is running even if it is still doing
-                // tool calls. Disarms the client-side first-chunk fallback.
                 if (!sawBusy) emit();
                 sawBusy = true;
               case 'session.execution.succeeded':
-                if (!sawBusy) return;
-                finish();
               case 'session.execution.interrupted':
-                if (!sawBusy) return;
-                finish();
+              case 'session.idle':
+              case 'session.completed':
+                // In 2.3.x idle/completion can arrive without an explicit
+                // started event in all proxy setups; if prompt was sent, treat
+                // as end-of-run.
+                if (promptRequested && !sawBusy) sawBusy = true;
+                if (sawBusy || promptRequested) finish();
               case 'session.execution.failed':
-                if (!sawBusy) return;
+              case 'session.error':
+                if (!promptRequested) return;
                 final error = props['error'];
-                final message = error is Map ? error['message'] : null;
+                final message = error is Map ? error['message'] : error;
                 fail(
                   HubApiException(
                     null,
-                    'агент завершил ход с ошибкой: ${message ?? 'unknown'}',
+                    'агент завершил ход с ошибкой: ${message ?? props['message'] ?? 'unknown'}',
                   ),
                 );
-              case 'session.idle':
-                // The whole agent run is over; only now is the answer final.
-                if (sawBusy) finish();
               case 'session.text.started':
-                // Announces a text part before its first delta. Nothing to
-                // render yet, but the part must stay in first-seen order.
-                if (!sawBusy) return;
+                if (!promptRequested) return;
+                if (!sawBusy) sawBusy = true;
                 sawText = true;
                 final startedKey = textPartKey();
                 if (!textOrder.contains(startedKey)) {
                   textOrder.add(startedKey);
                 }
               case 'session.text.delta':
-                if (!sawBusy) return;
+                if (!promptRequested) return;
                 final chunk = props['delta'];
                 if (chunk is! String || chunk.isEmpty) return;
+                if (!sawBusy) sawBusy = true;
                 sawText = true;
                 final deltaKey = textPartKey();
                 if (!textOrder.contains(deltaKey)) textOrder.add(deltaKey);
                 deltaTexts[deltaKey] = (deltaTexts[deltaKey] ?? '') + chunk;
                 emit();
               case 'session.text.ended':
-                // Carries the full text of the part — authoritative.
-                if (!sawBusy) return;
+                if (!promptRequested) return;
+                if (!sawBusy) sawBusy = true;
                 sawText = true;
                 final endedKey = textPartKey();
                 if (!textOrder.contains(endedKey)) textOrder.add(endedKey);
@@ -338,9 +459,8 @@ class OpencodeChatRepository implements ChatRepository {
                 emit();
               case 'session.message.content.updated':
                 // Durable fallback: full content of an assistant message.
-                // Only used when the live text.* events never arrived, so
-                // the same text cannot be appended twice.
-                if (!sawBusy) return;
+                if (!promptRequested) return;
+                if (!sawBusy) sawBusy = true;
                 final messageID = props['messageID'];
                 final content = props['content'];
                 if (messageID is! String || content is! List) return;
@@ -364,24 +484,21 @@ class OpencodeChatRepository implements ChatRepository {
               // ---- opencode v1 ----
               case 'session.status':
                 final status = props['status'];
-                final type = status is Map ? status['type'] : null;
+                final type = status is Map ? status['type'] : props['type'];
                 talker.info('chat: session.status → $type');
-                if (type == 'busy') {
-                  if (promptRequested && !sawBusy) {
-                    // Liveness signal for the client-side fallback.
-                    emit();
-                  }
+                if (type == 'busy' || type == 'running') {
+                  if (promptRequested && !sawBusy) emit();
                   if (promptRequested) sawBusy = true;
-                } else if (type == 'idle' && sawBusy) {
-                  // Multi-step runs go busy→…→busy→idle; only the final
-                  // idle closes the answer.
+                } else if (type == 'idle' && promptRequested) {
+                  if (!sawBusy) sawBusy = true;
                   finish();
+                } else if (type == 'retry' && promptRequested) {
+                  if (!sawBusy) emit();
+                  sawBusy = true;
                 }
               case 'message.part.updated':
-                // The SSE backlog replays old parts on connect — ignore
-                // everything until our own run reports busy, or stale text
-                // from previous turns leaks into this answer.
-                if (!sawBusy) return;
+                if (!promptRequested) return;
+                if (!sawBusy) sawBusy = true;
                 final part = props['part'];
                 if (part is Map && part['type'] == 'text') {
                   sawText = true;
@@ -393,36 +510,52 @@ class OpencodeChatRepository implements ChatRepository {
                   emit();
                 }
               case 'message.part.delta':
-                // Incremental chunk of a part's text — the primary way the
-                // final answer streams (the full part.updated often only
-                // arrives len=0 at part creation, or at the very end).
-                // Deltas for reasoning/tool parts never get a text
-                // part.updated, so they must stay invisible: accumulate
-                // unconditionally, but surface only known-text parts.
-                if (!sawBusy) return;
+                if (!promptRequested) return;
                 if (props['field'] != 'text') return;
                 final deltaId = (props['partID'] as String?) ?? '';
                 final deltaChunk = (props['delta'] as String?) ?? '';
                 if (deltaId.isEmpty || deltaChunk.isEmpty) return;
+                if (!sawBusy) sawBusy = true;
                 deltaTexts[deltaId] = (deltaTexts[deltaId] ?? '') + deltaChunk;
-                // Visible only once the part has been announced as text —
-                // until then the chunk sits in the map, never composed.
-                if (fullTexts.containsKey(deltaId)) {
+                if (fullTexts.containsKey(deltaId) || textOrder.contains(deltaId)) {
                   sawText = true;
+                  if (!textOrder.contains(deltaId)) textOrder.add(deltaId);
                   emit();
                 }
               case 'message.updated':
                 final info = props['info'];
-                final time = info is Map ? info['time'] : null;
-                final role = info is Map ? info['role'] : null;
-                final completed = time is Map ? time['completed'] : null;
-                final finishReason = info is Map ? info['finish'] : null;
-                // A step that ends in tool-calls is NOT the final answer —
-                // the agent continues with another busy round. Do not close.
+                final infoMap = info is Map ? info.cast<String, dynamic>() : null;
+                final time = infoMap?['time'];
+                final timeMap = time is Map ? time.cast<String, dynamic>() : null;
+                final role = infoMap?['role'] ?? infoMap?['type'] ?? props['role'];
+                final completed = timeMap?['completed'] ??
+                    timeMap?['end'] ??
+                    infoMap?['completed'];
+                final finishReason =
+                    infoMap?['finish'] ?? infoMap?['finishReason'] ?? props['finish'];
                 talker.debug(
                   'chat: message.updated role=$role completed=$completed '
                   'finish=$finishReason',
                 );
+                // Fallback completion for proxies that don't emit idle/execution
+                // events reliably: assistant message completed and not a tool step.
+                final isAssistant = role == 'assistant' || role == 'bot';
+                final finishStr = finishReason?.toString();
+                final isToolStep =
+                    finishStr == 'tool-calls' || finishStr == 'tool' || finishStr == 'tool_use';
+                if (promptRequested &&
+                    isAssistant &&
+                    completed != null &&
+                    !isToolStep) {
+                  if (!sawBusy) sawBusy = true;
+                  finish();
+                }
+                // If assistant errored, surface it instead of spinning forever.
+                final err = infoMap?['error'] ?? props['error'];
+                if (promptRequested && isAssistant && err != null && completed != null) {
+                  final msg = err is Map ? (err['message'] ?? err['data']) : err;
+                  fail(HubApiException(null, 'ошибка сообщения агента: $msg'));
+                }
               default:
                 talker.debug('chat: unhandled event ${event.type}');
             }
@@ -459,64 +592,78 @@ class OpencodeChatRepository implements ChatRepository {
       }
       talker.info('chat: sending prompt to session $sid: "$prompt"');
       promptRequested = true;
-      try {
-        // OpenCode v2.2.1: POST /api/session/{id}/prompt expects {"text": "..."}
+
+      final parts = [
+        {'type': 'text', 'text': prompt},
+      ];
+      final modelBody = (model != null && model['providerID'] != null && model['modelID'] != null)
+          ? {
+              'model': {
+                'providerID': model['providerID'],
+                'modelID': model['modelID'],
+              },
+            }
+          : const <String, dynamic>{};
+
+      Future<void> postPrompt(String path, Map<String, dynamic> body) async {
         await _api.post(
-          '/chat/session/$sid/prompt',
-          body: {'text': prompt},
+          path,
+          body: body,
           timeout: const Duration(seconds: 10),
         );
-        talker.info('chat: prompt accepted by hub (fast reply)');
-      } on HubApiException catch (e) {
-        if (e.isTimeout) {
-          talker.warning(
-            'chat: prompt held open >10s — assuming accepted, '
-            'waiting for SSE busy',
-          );
-        } else {
-          // Fallback to old format just in case
-          try {
-            await _api.post(
-              '/chat/session/$sid/prompt',
-              body: {
-                'parts': [
-                  {'type': 'text', 'text': prompt},
-                ],
-              },
-              timeout: const Duration(seconds: 10),
+      }
+
+      var accepted = false;
+      // Preferred for streaming: async prompt/message endpoints (return quickly,
+      // answer comes via SSE). Compatible with opencode server/hub proxies.
+      final attempts = <({String path, Map<String, dynamic> body, String label})>[
+        (
+          path: '/chat/session/$sid/prompt_async',
+          body: {'parts': parts, ...modelBody},
+          label: 'prompt_async(parts)',
+        ),
+        (
+          path: '/chat/session/$sid/message',
+          body: {'parts': parts, ...modelBody},
+          label: 'message(parts)',
+        ),
+        (
+          path: '/chat/session/$sid/prompt',
+          body: {'parts': parts, ...modelBody},
+          label: 'prompt(parts)',
+        ),
+        (
+          path: '/chat/session/$sid/prompt',
+          body: {'text': prompt, ...modelBody},
+          label: 'prompt(text)',
+        ),
+      ];
+
+      HubApiException? lastApiError;
+      for (final attempt in attempts) {
+        try {
+          await postPrompt(attempt.path, attempt.body);
+          talker.info('chat: prompt accepted by hub (${attempt.label})');
+          accepted = true;
+          break;
+        } on HubApiException catch (e) {
+          if (e.isTimeout) {
+            talker.warning(
+              'chat: ${attempt.label} held open >10s — assuming accepted, '
+              'waiting for SSE',
             );
-            talker.info('chat: prompt accepted by hub (fallback parts)');
-          } catch (e2) {
-            if (e2 is HubApiException && e2.isTimeout) {
-              talker.warning(
-                'chat: prompt held open >10s — assuming accepted, '
-                'waiting for SSE busy',
-              );
-            } else {
-              try {
-                await _api.post(
-                  '/chat/session/$sid/prompt_async',
-                  body: {
-                    'parts': [
-                      {'type': 'text', 'text': prompt},
-                    ],
-                  },
-                  timeout: const Duration(seconds: 10),
-                );
-                talker.info('chat: prompt_async accepted by hub (fallback)');
-              } catch (e3) {
-                if (e3 is HubApiException && e3.isTimeout) {
-                  talker.warning(
-                    'chat: prompt_async held open >10s — assuming accepted, '
-                    'waiting for SSE busy',
-                  );
-                } else {
-                  rethrow;
-                }
-              }
-            }
+            accepted = true;
+            break;
           }
+          lastApiError = e;
+          talker.warning('chat: ${attempt.label} failed: $e');
+        } catch (e) {
+          talker.warning('chat: ${attempt.label} failed: $e');
         }
+      }
+      if (!accepted) {
+        throw lastApiError ??
+            const HubApiException(null, 'не удалось отправить prompt в opencode');
       }
     } catch (e) {
       talker.error('chat: prompt send failed: $e');

@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/models/chat_message.dart';
 import '../../core/theme/retro_theme.dart';
+import '../../data/repositories/chat_repository.dart';
 import '../../features/chat/chat_bloc.dart';
 import '../../features/chat/chat_event.dart';
 import '../../features/chat/chat_state.dart';
@@ -62,6 +63,13 @@ class _ChatScreenState extends State<ChatScreen> {
               listenWhen: (a, b) => a != b,
               listener: (_, _) => _scrollToBottom(),
               builder: (context, state) {
+                final status = state.busy
+                    ? (state.queuedCount > 0
+                        ? 'busy · queued ${state.queuedCount}'
+                        : 'busy')
+                    : (state.queuedCount > 0
+                        ? 'queued ${state.queuedCount}'
+                        : 'ready');
                 return TerminalPanel(
                   title: 'opencode · agent session',
                   expand: true,
@@ -70,31 +78,39 @@ class _ChatScreenState extends State<ChatScreen> {
                     vertical: 6,
                   ),
                   trailing: Text(
-                    state.busy ? 'busy' : 'ready',
+                    status,
                     style: context.retroStyle(
                       size: 10,
                       color: state.busy ? palette.warning : palette.success,
                       glow: false,
                     ),
                   ),
-                  child: ListView.builder(
-                    controller: _scroll,
-                    itemCount: state.messages.length + (state.thinking ? 1 : 0),
-                    itemBuilder: (context, i) {
-                      if (i >= state.messages.length) {
-                        return const _ThinkingRow();
-                      }
-                      return _MessageRow(state.messages[i]);
-                    },
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _ModelSelector(state: state),
+                      const SizedBox(height: 4),
+                      Expanded(
+                        child: ListView.builder(
+                          controller: _scroll,
+                          itemCount:
+                              state.messages.length + (state.thinking ? 1 : 0),
+                          itemBuilder: (context, i) {
+                            if (i >= state.messages.length) {
+                              return const _ThinkingRow();
+                            }
+                            return _MessageRow(state.messages[i]);
+                          },
+                        ),
+                      ),
+                    ],
                   ),
                 );
               },
             ),
           ),
           BlocBuilder<ChatBloc, ChatState>(
-            buildWhen: (a, b) =>
-                a.suggestions != b.suggestions ||
-                a.messages.length != b.messages.length,
+            buildWhen: (a, b) => a.suggestions != b.suggestions,
             builder: (context, state) {
               if (state.suggestions.isEmpty) return const SizedBox.shrink();
               return Padding(
@@ -106,14 +122,12 @@ class _ChatScreenState extends State<ChatScreen> {
                     for (final suggestion in state.suggestions)
                       _SuggestionChip(
                         text: suggestion,
-                        onTap: state.busy
-                            ? null
-                            : () {
-                                context.read<ChatBloc>().add(
-                                  ChatPromptSent(suggestion),
-                                );
-                                _scrollToBottom();
-                              },
+                        onTap: () {
+                          context.read<ChatBloc>().add(
+                                ChatPromptSent(suggestion),
+                              );
+                          _scrollToBottom();
+                        },
                       ),
                   ],
                 ),
@@ -122,13 +136,17 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           const SizedBox(height: 8),
           BlocBuilder<ChatBloc, ChatState>(
-            buildWhen: (a, b) => a.busy != b.busy,
+            buildWhen: (a, b) =>
+                a.busy != b.busy || a.queuedCount != b.queuedCount,
             builder: (context, state) => RetroPromptField(
               controller: _input,
               accent: true,
               busy: state.busy,
-              actionLabel: 'send',
-              hint: 'спросите агента…',
+              allowSendWhileBusy: true,
+              actionLabel: state.busy ? 'queue' : 'send',
+              hint: state.busy
+                  ? 'дополните задачу или отправьте следом…'
+                  : 'спросите агента…',
               onStop: () => context.read<ChatBloc>().add(const ChatStopped()),
               onSubmitted: (value) {
                 context.read<ChatBloc>().add(ChatPromptSent(value));
@@ -276,6 +294,276 @@ class _SuggestionChip extends StatelessWidget {
             color: enabled ? palette.primary : palette.primaryDim,
             glow: false,
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ModelSelector extends StatelessWidget {
+  const _ModelSelector({required this.state});
+
+  final ChatState state;
+
+  String _label(ChatState state) {
+    if (state.selectedModelId.isEmpty) return 'model: auto (backend default)';
+    for (final m in state.models) {
+      if (m.id == state.selectedModelId) return 'model: ${m.name}';
+    }
+    return 'model: ${state.selectedModelId}';
+  }
+
+  Future<void> _openPicker(BuildContext context) async {
+    final palette = context.palette;
+
+    // Group flat model list by provider for drill-down: providers -> models.
+    final grouped = <String, List<ChatModelOption>>{};
+    for (final m in state.models) {
+      grouped.putIfAbsent(m.providerID, () => <ChatModelOption>[]).add(m);
+    }
+    final providerIds = grouped.keys.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    for (final id in providerIds) {
+      grouped[id]!.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    }
+
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        String? providerId; // null = providers list
+        return StatefulBuilder(
+          builder: (context, setState) {
+            final inProvider = providerId != null;
+            final title = inProvider ? 'provider: $providerId' : 'select model';
+
+            Widget content;
+            if (state.models.isEmpty && !state.modelsLoading) {
+              content = Text(
+                'список моделей недоступен.\n'
+                'будет использована модель по умолчанию на бэкенде.',
+                style: context.retroStyle(
+                  size: 12,
+                  color: palette.primaryDim,
+                  glow: false,
+                ),
+              );
+            } else if (!inProvider) {
+              content = ListView(
+                shrinkWrap: true,
+                children: [
+                  _ModelOptionTile(
+                    title: 'auto (backend default)',
+                    subtitle: 'не передавать model в запросе',
+                    selected: state.selectedModelId.isEmpty,
+                    onTap: () => Navigator.of(dialogContext).pop(''),
+                  ),
+                  for (final pid in providerIds)
+                    _ModelOptionTile(
+                      title: pid,
+                      subtitle:
+                          '${grouped[pid]!.length} models · открыть →',
+                      selected: state.selectedModelId.startsWith('$pid/'),
+                      onTap: () => setState(() => providerId = pid),
+                    ),
+                  if (state.modelsLoading)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'loading models…',
+                        style: context.retroStyle(
+                          size: 11,
+                          color: palette.primaryDim,
+                          glow: false,
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            } else {
+              final models = grouped[providerId] ?? const <ChatModelOption>[];
+              content = ListView(
+                shrinkWrap: true,
+                children: [
+                  _ModelOptionTile(
+                    title: '← назад к провайдерам',
+                    subtitle: 'выбор провайдера',
+                    selected: false,
+                    onTap: () => setState(() => providerId = null),
+                  ),
+                  for (final m in models)
+                    _ModelOptionTile(
+                      title: _modelDisplayName(m),
+                      subtitle: m.id,
+                      selected: m.id == state.selectedModelId,
+                      onTap: () => Navigator.of(dialogContext).pop(m.id),
+                    ),
+                ],
+              );
+            }
+
+            return AlertDialog(
+              backgroundColor: palette.surface,
+              shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
+              title: GlowText(
+                title,
+                size: 14,
+                weight: FontWeight.w700,
+              ),
+              content: SizedBox(
+                width: 520,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 420),
+                  child: content,
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  style: TextButton.styleFrom(
+                    foregroundColor: palette.primaryDim,
+                    shape: const RoundedRectangleBorder(
+                      borderRadius: BorderRadius.zero,
+                    ),
+                  ),
+                  child: Text(
+                    'CLOSE',
+                    style: context.retroStyle(
+                      size: 11,
+                      weight: FontWeight.w700,
+                      color: palette.primaryDim,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (selected != null && context.mounted) {
+      context.read<ChatBloc>().add(ChatModelSelected(selected));
+    }
+  }
+
+  static String _modelDisplayName(ChatModelOption m) {
+    final name = m.name.trim();
+    final prefix = '${m.providerID} / ';
+    if (name.toLowerCase().startsWith(prefix.toLowerCase())) {
+      final stripped = name.substring(prefix.length).trim();
+      if (stripped.isNotEmpty) return stripped;
+    }
+    return name.isEmpty ? m.modelID : name;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final loading = state.modelsLoading && state.models.isEmpty;
+    return InkWell(
+      onTap: loading ? null : () => _openPicker(context),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          border: Border.all(color: palette.border.withValues(alpha: 0.7)),
+          color: palette.surfaceAlt,
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                loading ? 'model: loading…' : _label(state),
+                overflow: TextOverflow.ellipsis,
+                style: context.retroStyle(
+                  size: 10,
+                  color: palette.primary,
+                  glow: false,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              loading ? '…' : 'SELECT',
+              style: context.retroStyle(
+                size: 10,
+                weight: FontWeight.w700,
+                color: palette.accent,
+                glow: false,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ModelOptionTile extends StatelessWidget {
+  const _ModelOptionTile({
+    required this.title,
+    required this.subtitle,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: selected ? palette.accent : palette.border,
+            width: selected ? 2 : 1,
+          ),
+          color: selected
+              ? palette.accent.withValues(alpha: 0.08)
+              : palette.surfaceAlt,
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              selected ? '▸' : ' ',
+              style: context.retroStyle(
+                size: 12,
+                weight: FontWeight.w700,
+                color: selected ? palette.accent : palette.primaryDim,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: context.retroStyle(
+                      size: 12,
+                      weight: FontWeight.w700,
+                      color: selected ? palette.accent : palette.primary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: context.retroStyle(
+                      size: 10,
+                      color: palette.primaryDim,
+                      glow: false,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

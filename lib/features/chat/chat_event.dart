@@ -28,3 +28,13 @@ class ChatStopped extends ChatEvent {
 class ChatCleared extends ChatEvent {
   const ChatCleared();
 }
+
+class ChatModelSelected extends ChatEvent {
+  const ChatModelSelected(this.modelId);
+
+  /// `providerID/modelID` or empty for default.
+  final String modelId;
+
+  @override
+  List<Object?> get props => [modelId];
+}

@@ -12,6 +12,7 @@ class ConnectionSettings extends Equatable {
     this.firebaseRegion = 'europe-west1',
     this.apiBaseUrl = '',
     this.apiToken = '',
+    this.adminPassword = '',
     this.pollIntervalSeconds = 5,
     this.logIntervalSeconds = 10,
     this.autoConnect = true,
@@ -30,6 +31,10 @@ class ConnectionSettings extends Equatable {
 
   final String apiToken;
 
+  /// Admin password used to exchange for an API key via `POST /auth/token`.
+  /// Stored locally so the operator does not have to retype it.
+  final String adminPassword;
+
   final int pollIntervalSeconds;
 
   /// How often the TERMINAL journal is polled (seconds). Larger than the status
@@ -46,7 +51,7 @@ class ConnectionSettings extends Equatable {
   double get completeness {
     final fields = <bool>[
       apiBaseUrl.trim().isNotEmpty,
-      apiToken.trim().isNotEmpty,
+      apiToken.trim().isNotEmpty || adminPassword.trim().isNotEmpty,
     ];
     return fields.where((f) => f).length / fields.length;
   }
@@ -58,6 +63,7 @@ class ConnectionSettings extends Equatable {
     String? firebaseRegion,
     String? apiBaseUrl,
     String? apiToken,
+    String? adminPassword,
     int? pollIntervalSeconds,
     int? logIntervalSeconds,
     bool? autoConnect,
@@ -69,6 +75,7 @@ class ConnectionSettings extends Equatable {
       firebaseRegion: firebaseRegion ?? this.firebaseRegion,
       apiBaseUrl: apiBaseUrl ?? this.apiBaseUrl,
       apiToken: apiToken ?? this.apiToken,
+      adminPassword: adminPassword ?? this.adminPassword,
       pollIntervalSeconds: pollIntervalSeconds ?? this.pollIntervalSeconds,
       logIntervalSeconds: logIntervalSeconds ?? this.logIntervalSeconds,
       autoConnect: autoConnect ?? this.autoConnect,
@@ -82,6 +89,7 @@ class ConnectionSettings extends Equatable {
     'firebaseRegion': firebaseRegion,
     'apiBaseUrl': apiBaseUrl,
     'apiToken': apiToken,
+    'adminPassword': adminPassword,
     'pollIntervalSeconds': pollIntervalSeconds,
     'logIntervalSeconds': logIntervalSeconds,
     'autoConnect': autoConnect,
@@ -95,6 +103,7 @@ class ConnectionSettings extends Equatable {
       firebaseRegion: json['firebaseRegion'] as String? ?? 'europe-west1',
       apiBaseUrl: json['apiBaseUrl'] as String? ?? '',
       apiToken: json['apiToken'] as String? ?? '',
+      adminPassword: json['adminPassword'] as String? ?? '',
       pollIntervalSeconds: (json['pollIntervalSeconds'] as num?)?.toInt() ?? 5,
       logIntervalSeconds: (json['logIntervalSeconds'] as num?)?.toInt() ?? 10,
       autoConnect: json['autoConnect'] as bool? ?? true,
@@ -109,6 +118,7 @@ class ConnectionSettings extends Equatable {
     firebaseRegion,
     apiBaseUrl,
     apiToken,
+    adminPassword,
     pollIntervalSeconds,
     logIntervalSeconds,
     autoConnect,

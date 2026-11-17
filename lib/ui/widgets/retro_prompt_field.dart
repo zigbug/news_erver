@@ -11,6 +11,7 @@ class RetroPromptField extends StatelessWidget {
     this.hint = 'awaiting input',
     this.enabled = true,
     this.busy = false,
+    this.allowSendWhileBusy = false,
     this.actionLabel = 'RUN',
     this.accent = false,
     this.onStop,
@@ -21,11 +22,17 @@ class RetroPromptField extends StatelessWidget {
   final ValueChanged<String> onSubmitted;
   final String hint;
   final bool enabled;
+
+  /// A run is in progress. When [allowSendWhileBusy] is false, input is locked
+  /// and the action becomes a stop button (legacy behavior).
   final bool busy;
+
+  /// Keep input/send available while busy (to queue/supplement), and show a
+  /// separate stop button when [onStop] is provided.
+  final bool allowSendWhileBusy;
   final String actionLabel;
   final bool accent;
 
-  /// When set, the action button turns into a stop control while [busy].
   final VoidCallback? onStop;
   final String stopLabel;
 
@@ -33,6 +40,16 @@ class RetroPromptField extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final color = accent ? palette.accent : palette.primary;
+
+    final canType = enabled && (!busy || allowSendWhileBusy);
+    final showStopOnly = busy && onStop != null && !allowSendWhileBusy;
+    final showStopExtra = busy && onStop != null && allowSendWhileBusy;
+
+    void submit() {
+      final value = controller.text;
+      if (value.trim().isEmpty) return;
+      onSubmitted(value);
+    }
 
     return Container(
       decoration: BoxDecoration(
@@ -56,7 +73,7 @@ class RetroPromptField extends StatelessWidget {
             child: TextField(
               showCursor: true,
               controller: controller,
-              enabled: enabled && !busy,
+              enabled: canType,
               textInputAction: TextInputAction.send,
               onSubmitted: (value) {
                 if (value.trim().isEmpty) return;
@@ -84,19 +101,38 @@ class RetroPromptField extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 8),
+          if (showStopExtra) ...[
+            const SizedBox(width: 6),
+            TextButton(
+              onPressed: onStop,
+              style: TextButton.styleFrom(
+                foregroundColor: palette.warning,
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.zero,
+                ),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              ),
+              child: Text(
+                stopLabel.toUpperCase(),
+                style: context.retroStyle(
+                  size: 12,
+                  weight: FontWeight.w700,
+                  color: palette.warning,
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(width: 6),
           TextButton(
-            onPressed: busy
+            onPressed: showStopOnly
                 ? onStop
-                : enabled
-                ? () {
-                    final value = controller.text;
-                    if (value.trim().isEmpty) return;
-                    onSubmitted(value);
-                  }
-                : null,
+                : (enabled && canType)
+                    ? submit
+                    : null,
             style: TextButton.styleFrom(
-              foregroundColor: busy && onStop != null ? palette.warning : color,
+              foregroundColor:
+                  showStopOnly ? palette.warning : color,
               disabledForegroundColor: palette.primaryDim,
               shape: const RoundedRectangleBorder(
                 borderRadius: BorderRadius.zero,
@@ -104,11 +140,11 @@ class RetroPromptField extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             ),
             child: Text(
-              (busy && onStop != null ? stopLabel : actionLabel).toUpperCase(),
+              (showStopOnly ? stopLabel : actionLabel).toUpperCase(),
               style: context.retroStyle(
                 size: 12,
                 weight: FontWeight.w700,
-                color: busy && onStop != null ? palette.warning : color,
+                color: showStopOnly ? palette.warning : color,
               ),
             ),
           ),

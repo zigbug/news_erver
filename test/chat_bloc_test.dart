@@ -49,7 +49,7 @@ class _FakeChatRepository implements ChatRepository {
   }
 
   @override
-  Stream<String> reply(String prompt) async* {
+  Stream<String> reply(String prompt, {Map<String, String>? model}) async* {
     calls++;
     if (silent) {
       await (hold ??= Completer<void>()).future;
@@ -64,6 +64,9 @@ class _FakeChatRepository implements ChatRepository {
     text += 'for $prompt';
     yield text;
   }
+
+  @override
+  Future<List<ChatModelOption>> availableModels() async => const [];
 }
 
 /// Polls [condition] on the real event loop until it holds or the deadline
